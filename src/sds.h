@@ -79,6 +79,7 @@ struct __attribute__((__packed__)) sdshdr64 {
 #define SDS_TYPE_64 4
 #define SDS_TYPE_MASK 7
 #define SDS_TYPE_BITS 3
+#define SDS_TYPE_TTL 8
 #define SDS_HDR_VAR(T, s) struct sdshdr##T *sh = (void *)((s) - (sizeof(struct sdshdr##T)));
 #define SDS_HDR(T, s) ((struct sdshdr##T *)((s) - (sizeof(struct sdshdr##T))))
 #define SDS_TYPE_5_LEN(f) ((f) >> SDS_TYPE_BITS)
@@ -97,13 +98,14 @@ static inline size_t sdslen(const sds s) {
 
 static inline size_t sdsavail(const sds s) {
     unsigned char flags = s[-1];
+    int has_ttl = flags & SDS_TYPE_TTL;
     switch (flags & SDS_TYPE_MASK) {
     case SDS_TYPE_5: {
         return 0;
     }
     case SDS_TYPE_8: {
         SDS_HDR_VAR(8, s);
-        return sh->alloc - sh->len;
+        return sh->alloc - sh->len - (has_ttl ? 8 : 0);
     }
     case SDS_TYPE_16: {
         SDS_HDR_VAR(16, s);

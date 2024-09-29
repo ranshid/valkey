@@ -963,6 +963,8 @@ typedef struct serverDb {
     long long avg_ttl;                    /* Average TTL, just for stats */
     unsigned long expires_cursor;         /* Cursor of the active expire cycle. */
     list *defrag_later;                   /* List of key names to attempt to defrag one by one, gradually. */
+    rax *test_expire;
+    size_t test_expire_memory;
 } serverDb;
 
 /* forward declaration for functions ctx */

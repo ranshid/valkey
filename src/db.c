@@ -371,6 +371,7 @@ robj *dbRandomKey(serverDb *db) {
     dictEntry *de;
     int maxtries = 100;
     int allvolatile = kvstoreSize(db->keys) == kvstoreSize(db->expires);
+    // int allvolatile = kvstoreSize(db->keys) == raxSize(db->test_expire);
 
     while (1) {
         sds key;
@@ -428,6 +429,11 @@ int dbGenericDelete(serverDb *db, robj *key, int async, int flags) {
         /* Deleting an entry from the expires dict will not free the sds of
          * the key, because it is shared with the main dictionary. */
         kvstoreDictDelete(db->expires, dict_index, key->ptr);
+        uint64_t key_ptr = htonu64((uint64_t)key->ptr);
+        size_t mem_pre = zmalloc_used_memory();
+        raxRemove(db->test_expire, (unsigned char *)&key_ptr, sizeof(key_ptr), NULL);
+        size_t mem_post = zmalloc_used_memory();
+        db->test_expire_memory += (mem_post - mem_pre);
 
         kvstoreDictTwoPhaseUnlinkFree(db->keys, dict_index, de, plink, table);
         return 1;
@@ -515,10 +521,15 @@ long long emptyDbStructure(serverDb *dbarray, int dbnum, int async, void(callbac
         } else {
             kvstoreEmpty(dbarray[j].keys, callback);
             kvstoreEmpty(dbarray[j].expires, callback);
+            size_t mem_pre = zmalloc_used_memory();
+            raxFree(dbarray[j].test_expire);
+            size_t mem_post = zmalloc_used_memory();
+            dbarray[j].test_expire_memory += (mem_post - mem_pre);
         }
         /* Because all keys of database are removed, reset average ttl. */
         dbarray[j].avg_ttl = 0;
         dbarray[j].expires_cursor = 0;
+        dbarray[j].test_expire_memory = 0;
     }
 
     return removed;
@@ -588,6 +599,8 @@ serverDb *initTempDb(void) {
         tempDb[i].id = i;
         tempDb[i].keys = kvstoreCreate(&kvstoreKeysDictType, slot_count_bits, flags);
         tempDb[i].expires = kvstoreCreate(&kvstoreExpiresDictType, slot_count_bits, flags);
+        tempDb[i].test_expire = raxNew();
+        tempDb[i].test_expire_memory = 0UL;
     }
 
     return tempDb;
@@ -602,6 +615,7 @@ void discardTempDb(serverDb *tempDb, void(callback)(dict *)) {
     for (int i = 0; i < server.dbnum; i++) {
         kvstoreRelease(tempDb[i].keys);
         kvstoreRelease(tempDb[i].expires);
+        raxFree(tempDb[i].test_expire);
     }
 
     zfree(tempDb);
@@ -1570,11 +1584,13 @@ int dbSwapDatabases(int id1, int id2) {
     db1->expires = db2->expires;
     db1->avg_ttl = db2->avg_ttl;
     db1->expires_cursor = db2->expires_cursor;
+    db1->test_expire = db2->test_expire;
 
     db2->keys = aux.keys;
     db2->expires = aux.expires;
     db2->avg_ttl = aux.avg_ttl;
     db2->expires_cursor = aux.expires_cursor;
+    db2->test_expire = aux.test_expire;
 
     /* Now we need to handle clients blocked on lists: as an effect
      * of swapping the two DBs, a client that was waiting for list
@@ -1612,11 +1628,13 @@ void swapMainDbWithTempDb(serverDb *tempDb) {
         activedb->expires = newdb->expires;
         activedb->avg_ttl = newdb->avg_ttl;
         activedb->expires_cursor = newdb->expires_cursor;
+        activedb->test_expire = newdb->test_expire;
 
         newdb->keys = aux.keys;
         newdb->expires = aux.expires;
         newdb->avg_ttl = aux.avg_ttl;
         newdb->expires_cursor = aux.expires_cursor;
+        newdb->test_expire = aux.test_expire;
 
         /* Now we need to handle clients blocked on lists: as an effect
          * of swapping the two DBs, a client that was waiting for list
@@ -1666,6 +1684,12 @@ void swapdbCommand(client *c) {
  *----------------------------------------------------------------------------*/
 
 int removeExpire(serverDb *db, robj *key) {
+    uint64_t key_ptr = htonu64((uint64_t)key->ptr);
+    size_t mem_pre = zmalloc_used_memory();
+    raxRemove(db->test_expire, (unsigned char *)&key_ptr, sizeof(key_ptr), NULL);
+    size_t mem_post = zmalloc_used_memory();
+    db->test_expire_memory += (mem_post - mem_pre);
+
     return kvstoreDictDelete(db->expires, getKVStoreIndexForKey(key->ptr), key->ptr) == DICT_OK;
 }
 
@@ -1686,6 +1710,11 @@ void setExpire(client *c, serverDb *db, robj *key, long long when) {
     } else {
         dictSetSignedIntegerVal(de, when);
     }
+    uint64_t key_ptr = htonu64((uint64_t)key->ptr);
+    size_t mem_pre = zmalloc_used_memory();
+    raxTryInsert(db->test_expire, (unsigned char *)&key_ptr, sizeof(key_ptr), NULL, NULL);
+    size_t mem_post = zmalloc_used_memory();
+    db->test_expire_memory += (mem_post - mem_pre);
 
     int writable_replica = server.primary_host && server.repl_replica_ro == 0;
     if (c && writable_replica && !c->flag.primary) rememberReplicaKeyWithExpire(db, key);

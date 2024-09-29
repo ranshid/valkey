@@ -156,10 +156,10 @@ void addReplyPubsubSubscribed(client *c, robj *channel, pubsubtype type) {
 void addReplyPubsubUnsubscribed(client *c, robj *channel, pubsubtype type) {
     struct ClientFlags old_flags = c->flag;
     c->flag.pushing = 1;
-    if (c->resp == 2)
-        addReply(c, shared.mbulkhdr[3]);
-    else
-        addReplyPushLen(c, 3);
+    // if (c->resp == 2)
+    addReply(c, shared.mbulkhdr[3]);
+    // else
+    //     addReplyPushLen(c, 3);
     addReply(c, *type.unsubscribeMsg);
     if (channel)
         addReplyBulk(c, channel);

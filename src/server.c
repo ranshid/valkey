@@ -2656,6 +2656,7 @@ void initServer(void) {
         server.db[j].id = j;
         server.db[j].avg_ttl = 0;
         server.db[j].defrag_later = listCreate();
+        server.db[j].test_expire = raxNew();
         listSetFreeMethod(server.db[j].defrag_later, (void (*)(void *))sdsfree);
     }
     evictionPoolAlloc(); /* Initialize the LRU keys pool. */
@@ -5518,6 +5519,8 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
         long long memory_lua = evalMemory();
         long long memory_functions = functionsMemory();
         struct serverMemOverhead *mh = getMemoryOverheadData();
+        size_t expiery_mem = 0;
+        for (int i = 0; i < server.dbnum; i++) expiery_mem += server.db[i].test_expire_memory;
 
         /* Peak memory is updated from time to time by serverCron() so it
          * may happen that the instantaneous value is slightly bigger than
@@ -5593,7 +5596,8 @@ sds genValkeyInfoString(dict *section_dict, int all_sections, int everything) {
             "mem_overhead_db_hashtable_rehashing:%zu\r\n", mh->overhead_db_hashtable_rehashing,
             "active_defrag_running:%d\r\n", server.active_defrag_running,
             "lazyfree_pending_objects:%zu\r\n", lazyfreeGetPendingObjectsCount(),
-            "lazyfreed_objects:%zu\r\n", lazyfreeGetFreedObjectsCount()));
+            "lazyfreed_objects:%zu\r\n", lazyfreeGetFreedObjectsCount(),
+            "rax_mem: %zu\r\n", expiery_mem));
         /* clang-format on */
         freeMemoryOverheadData(mh);
     }
