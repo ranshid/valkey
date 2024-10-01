@@ -64,20 +64,21 @@
 typedef long long mstime_t; /* millisecond time type. */
 typedef long long ustime_t; /* microsecond time type. */
 
-#include "ae.h"         /* Event driven programming library */
-#include "sds.h"        /* Dynamic safe strings */
-#include "dict.h"       /* Hash tables */
-#include "kvstore.h"    /* Slot-based hash table */
-#include "adlist.h"     /* Linked lists */
-#include "zmalloc.h"    /* total memory usage aware version of malloc/free */
-#include "anet.h"       /* Networking the easy way */
-#include "version.h"    /* Version macro */
-#include "util.h"       /* Misc functions useful in many places */
-#include "latency.h"    /* Latency monitor API */
-#include "sparkline.h"  /* ASCII graphs API */
-#include "quicklist.h"  /* Lists are encoded as linked lists of
+#include "ae.h"        /* Event driven programming library */
+#include "sds.h"       /* Dynamic safe strings */
+#include "dict.h"      /* Hash tables */
+#include "kvstore.h"   /* Slot-based hash table */
+#include "adlist.h"    /* Linked lists */
+#include "zmalloc.h"   /* total memory usage aware version of malloc/free */
+#include "anet.h"      /* Networking the easy way */
+#include "version.h"   /* Version macro */
+#include "util.h"      /* Misc functions useful in many places */
+#include "latency.h"   /* Latency monitor API */
+#include "sparkline.h" /* ASCII graphs API */
+#include "quicklist.h" /* Lists are encoded as linked lists of
                            N-elements flat arrays */
-#include "rax.h"        /* Radix tree */
+#include "rax.h"       /* Radix tree */
+#include "hexrax.h"
 #include "connection.h" /* Connection abstraction */
 #include "memory_prefetch.h"
 
@@ -963,7 +964,7 @@ typedef struct serverDb {
     long long avg_ttl;                    /* Average TTL, just for stats */
     unsigned long expires_cursor;         /* Cursor of the active expire cycle. */
     list *defrag_later;                   /* List of key names to attempt to defrag one by one, gradually. */
-    rax *test_expire;
+    hexrax *test_expire;
     size_t test_expire_memory;
 } serverDb;
 
