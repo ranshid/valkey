@@ -94,12 +94,12 @@
  *
  */
 
-#define HEXRAX_NODE_MAX_SIZE ((1 << 5) - 1)
+#define HEXRAX_NODE_MAX_SIZE ((1 << 13) - 1)
 typedef struct hexraxNode {
-    uint8_t iskey : 1;   /* Does this node contain a key? */
-    uint8_t isnull : 1;  /* Associated value is NULL (don't store it). */
-    uint8_t iscompr : 1; /* Node is compressed. */
-    uint8_t size : 5;    /* Number of children, or compressed string len. */
+    uint16_t iskey : 1;   /* Does this node contain a key? */
+    uint16_t isnull : 1;  /* Associated value is NULL (don't store it). */
+    uint16_t iscompr : 1; /* Node is compressed. */
+    uint16_t size : 13;   /* Number of children, or compressed string len. */
     /* Data layout is as follows:
      *
      * If node is not compressed we have 'size' bytes, one for each children
