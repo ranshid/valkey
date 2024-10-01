@@ -831,7 +831,7 @@ int hexraxGenericInsert(hexrax *hexrax, unsigned char *s, size_t len, void *data
 
         /* If this node is going to have a single child, and there
          * are other characters, so that that would result in a chain
-         * of single-childed nodes, turn it into a compressed node.
+         * of single-childed nodes, turn it into a compressed node. */
         if (h->size == 0 && len - i > 1) {
             debugf("Inserting compressed node\n");
             size_t comprsize = len - i;
@@ -842,8 +842,7 @@ int hexraxGenericInsert(hexrax *hexrax, unsigned char *s, size_t len, void *data
             memcpy(parentlink, &h, sizeof(h));
             parentlink = hexraxNodeLastChildPtr(h);
             i += comprsize;
-        } else { */
-        {
+        } else {
             debugf("Inserting normal node\n");
             hexraxNode **new_parentlink;
             hexraxNode *newh = hexraxAddChild(h, s[i], &child, &new_parentlink);
