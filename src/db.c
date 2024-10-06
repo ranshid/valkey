@@ -431,7 +431,7 @@ int dbGenericDelete(serverDb *db, robj *key, int async, int flags) {
         kvstoreDictDelete(db->expires, dict_index, key->ptr);
         uint64_t key_ptr = htonu64((uint64_t)key->ptr);
         size_t mem_pre = zmalloc_used_memory();
-        hexraxRemove(db->test_expire, (unsigned char *)&key_ptr, sizeof(key_ptr), NULL);
+        raxRemove(db->test_expire, (unsigned char *)&key_ptr, sizeof(key_ptr), NULL);
         size_t mem_post = zmalloc_used_memory();
         db->test_expire_memory += (mem_post - mem_pre);
 
@@ -522,7 +522,7 @@ long long emptyDbStructure(serverDb *dbarray, int dbnum, int async, void(callbac
             kvstoreEmpty(dbarray[j].keys, callback);
             kvstoreEmpty(dbarray[j].expires, callback);
             size_t mem_pre = zmalloc_used_memory();
-            hexraxFree(dbarray[j].test_expire);
+            raxFree(dbarray[j].test_expire);
             size_t mem_post = zmalloc_used_memory();
             dbarray[j].test_expire_memory += (mem_post - mem_pre);
         }
@@ -599,7 +599,7 @@ serverDb *initTempDb(void) {
         tempDb[i].id = i;
         tempDb[i].keys = kvstoreCreate(&kvstoreKeysDictType, slot_count_bits, flags);
         tempDb[i].expires = kvstoreCreate(&kvstoreExpiresDictType, slot_count_bits, flags);
-        tempDb[i].test_expire = hexraxNew();
+        tempDb[i].test_expire = raxNew();
         tempDb[i].test_expire_memory = 0UL;
     }
 
@@ -615,7 +615,7 @@ void discardTempDb(serverDb *tempDb, void(callback)(dict *)) {
     for (int i = 0; i < server.dbnum; i++) {
         kvstoreRelease(tempDb[i].keys);
         kvstoreRelease(tempDb[i].expires);
-        hexraxFree(tempDb[i].test_expire);
+        raxFree(tempDb[i].test_expire);
     }
 
     zfree(tempDb);
@@ -1686,7 +1686,7 @@ void swapdbCommand(client *c) {
 int removeExpire(serverDb *db, robj *key) {
     uint64_t key_ptr = htonu64((uint64_t)key->ptr);
     size_t mem_pre = zmalloc_used_memory();
-    hexraxRemove(db->test_expire, (unsigned char *)&key_ptr, sizeof(key_ptr), NULL);
+    raxRemove(db->test_expire, (unsigned char *)&key_ptr, sizeof(key_ptr), NULL);
     size_t mem_post = zmalloc_used_memory();
     db->test_expire_memory += (mem_post - mem_pre);
 
@@ -1712,7 +1712,7 @@ void setExpire(client *c, serverDb *db, robj *key, long long when) {
     }
     uint64_t key_ptr = htonu64((uint64_t)key->ptr);
     size_t mem_pre = zmalloc_used_memory();
-    hexraxTryInsert(db->test_expire, (unsigned char *)&key_ptr, sizeof(key_ptr), NULL, NULL);
+    raxTryInsert(db->test_expire, (unsigned char *)&key_ptr, sizeof(key_ptr), NULL, NULL);
     size_t mem_post = zmalloc_used_memory();
     db->test_expire_memory += (mem_post - mem_pre);
 
