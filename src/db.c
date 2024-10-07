@@ -38,7 +38,7 @@
 #include <ctype.h>
 
 
-#define KEY_ST_KEYLEN 14 /* 8 bytes mstime + 8 bytes client ID. */
+#define KEY_ST_KEYLEN 10 /* 8 bytes mstime + 8 bytes client ID. */
 static int getKVStoreIndexForKey(sds key);
 /* Given client ID and timeout, write the resulting radix tree key in buf. */
 void encodeTTLKey(unsigned char *buf, robj *key, uint64_t timeout) {
