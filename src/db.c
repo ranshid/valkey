@@ -38,13 +38,13 @@
 #include <ctype.h>
 
 
-#define KEY_ST_KEYLEN 16 /* 8 bytes mstime + 8 bytes client ID. */
+#define KEY_ST_KEYLEN 8 /* 8 bytes mstime + 8 bytes client ID. */
 static int getKVStoreIndexForKey(sds key);
 /* Given client ID and timeout, write the resulting radix tree key in buf. */
 void encodeTTLKey(unsigned char *buf, robj *key, uint64_t timeout) {
     timeout = htonu64(timeout);
     memcpy(buf, &timeout, sizeof(timeout));
-    memcpy(buf + 8, &key, sizeof(key));
+    // memcpy(buf + 8, &key, sizeof(key));
     if (sizeof(key) == 4) memset(buf + 12, 0, 4); /* Zero padding for 32bit target. */
 }
 
@@ -53,7 +53,7 @@ void encodeTTLKey(unsigned char *buf, robj *key, uint64_t timeout) {
 void decodeTTLKey(unsigned char *buf, uint64_t *timeout, robj **key) {
     memcpy(timeout, buf, sizeof(*timeout));
     *timeout = ntohu64(*timeout);
-    memcpy(key, buf + 8, sizeof(*key));
+    // memcpy(key, buf + 8, sizeof(*key));
 }
 
 /* Add the specified client id / timeout as a key in the radix tree we use
