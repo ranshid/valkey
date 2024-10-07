@@ -39,9 +39,9 @@
 
 
 #define KEY_ST_KEYLEN 16 /* 8 bytes mstime + 8 bytes client ID. */
-
+static int getKVStoreIndexForKey(sds key);
 /* Given client ID and timeout, write the resulting radix tree key in buf. */
-void encodeTimeoutKey(unsigned char *buf, robj *key, uint64_t timeout) {
+void encodeTTLKey(unsigned char *buf, robj *key, uint64_t timeout) {
     timeout = htonu64(timeout);
     memcpy(buf, &timeout, sizeof(timeout));
     memcpy(buf + 8, &key, sizeof(key));
@@ -50,7 +50,7 @@ void encodeTimeoutKey(unsigned char *buf, robj *key, uint64_t timeout) {
 
 /* Given a key encoded with encodeTimeoutKey(), resolve the fields and write
  * the timeout into *toptr and the client pointer into *cptr. */
-void decodeTimeoutKey(unsigned char *buf, uint64_t *timeout, robj **key) {
+void decodeTTLKey(unsigned char *buf, uint64_t *timeout, robj **key) {
     memcpy(timeout, buf, sizeof(*timeout));
     *timeout = ntohu64(*timeout);
     memcpy(key, buf + 8, sizeof(*key));
@@ -63,7 +63,7 @@ void addKeyToTimeoutTable(serverDb *db, robj *key, uint64_t timeout) {
     unsigned char buf[KEY_ST_KEYLEN];
 
 
-    encodeTimeoutKey(buf, timeout, key);
+    encodeTTLKey(buf, key, timeout);
     size_t mem_pre = zmalloc_used_memory();
     raxTryInsert(db->test_expire, buf, sizeof(buf), NULL, NULL);
     size_t mem_post = zmalloc_used_memory();
@@ -78,7 +78,7 @@ void removeKeyFromTimeoutTable(serverDb *db, robj *key) {
     uint64_t timeout = dictGetSignedIntegerVal(kde);
 
     unsigned char buf[KEY_ST_KEYLEN];
-    encodeTimeoutKey(buf, timeout, key);
+    encodeTTLKey(buf, key, timeout);
     size_t mem_pre = zmalloc_used_memory();
     raxRemove(db->test_expire, buf, sizeof(buf), NULL);
     size_t mem_post = zmalloc_used_memory();
