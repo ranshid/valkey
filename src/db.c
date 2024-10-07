@@ -37,6 +37,53 @@
 #include <signal.h>
 #include <ctype.h>
 
+
+#define KEY_ST_KEYLEN 16 /* 8 bytes mstime + 8 bytes client ID. */
+
+/* Given client ID and timeout, write the resulting radix tree key in buf. */
+void encodeTimeoutKey(unsigned char *buf, robj *key, uint64_t timeout) {
+    timeout = htonu64(timeout);
+    memcpy(buf, &timeout, sizeof(timeout));
+    memcpy(buf + 8, &key, sizeof(key));
+    if (sizeof(key) == 4) memset(buf + 12, 0, 4); /* Zero padding for 32bit target. */
+}
+
+/* Given a key encoded with encodeTimeoutKey(), resolve the fields and write
+ * the timeout into *toptr and the client pointer into *cptr. */
+void decodeTimeoutKey(unsigned char *buf, uint64_t *timeout, robj **key) {
+    memcpy(timeout, buf, sizeof(*timeout));
+    *timeout = ntohu64(*timeout);
+    memcpy(key, buf + 8, sizeof(*key));
+}
+
+/* Add the specified client id / timeout as a key in the radix tree we use
+ * to handle blocked clients timeouts. The client is not added to the list
+ * if its timeout is zero (block forever). */
+void addKeyToTimeoutTable(serverDb *db, robj *key, uint64_t timeout) {
+    unsigned char buf[KEY_ST_KEYLEN];
+
+
+    encodeTimeoutKey(buf, timeout, key);
+    size_t mem_pre = zmalloc_used_memory();
+    raxTryInsert(db->test_expire, buf, sizeof(buf), NULL, NULL);
+    size_t mem_post = zmalloc_used_memory();
+    db->test_expire_memory += (mem_post - mem_pre);
+}
+
+/* Remove the client from the table when it is unblocked for reasons
+ * different than timing out. */
+void removeKeyFromTimeoutTable(serverDb *db, robj *key) {
+    int dict_index = getKVStoreIndexForKey(key->ptr);
+    dictEntry *kde = kvstoreDictFind(db->expires, dict_index, key->ptr);
+    uint64_t timeout = dictGetSignedIntegerVal(kde);
+
+    unsigned char buf[KEY_ST_KEYLEN];
+    encodeTimeoutKey(buf, timeout, key);
+    size_t mem_pre = zmalloc_used_memory();
+    raxRemove(db->test_expire, buf, sizeof(buf), NULL);
+    size_t mem_post = zmalloc_used_memory();
+    db->test_expire_memory += (mem_post - mem_pre);
+}
 /*-----------------------------------------------------------------------------
  * C-level DB API
  *----------------------------------------------------------------------------*/
@@ -428,12 +475,9 @@ int dbGenericDelete(serverDb *db, robj *key, int async, int flags) {
         }
         /* Deleting an entry from the expires dict will not free the sds of
          * the key, because it is shared with the main dictionary. */
+        removeKeyFromTimeoutTable(db, key);
         kvstoreDictDelete(db->expires, dict_index, key->ptr);
-        uint64_t key_ptr = htonu64((uint64_t)key->ptr);
-        size_t mem_pre = zmalloc_used_memory();
-        raxRemove(db->test_expire, (unsigned char *)&key_ptr, sizeof(key_ptr), NULL);
-        size_t mem_post = zmalloc_used_memory();
-        db->test_expire_memory += (mem_post - mem_pre);
+
 
         kvstoreDictTwoPhaseUnlinkFree(db->keys, dict_index, de, plink, table);
         return 1;
@@ -1684,11 +1728,7 @@ void swapdbCommand(client *c) {
  *----------------------------------------------------------------------------*/
 
 int removeExpire(serverDb *db, robj *key) {
-    uint64_t key_ptr = htonu64((uint64_t)key->ptr);
-    size_t mem_pre = zmalloc_used_memory();
-    raxRemove(db->test_expire, (unsigned char *)&key_ptr, sizeof(key_ptr), NULL);
-    size_t mem_post = zmalloc_used_memory();
-    db->test_expire_memory += (mem_post - mem_pre);
+    removeKeyFromTimeoutTable(db, key);
 
     return kvstoreDictDelete(db->expires, getKVStoreIndexForKey(key->ptr), key->ptr) == DICT_OK;
 }
@@ -1710,11 +1750,7 @@ void setExpire(client *c, serverDb *db, robj *key, long long when) {
     } else {
         dictSetSignedIntegerVal(de, when);
     }
-    uint64_t key_ptr = htonu64((uint64_t)key->ptr);
-    size_t mem_pre = zmalloc_used_memory();
-    raxTryInsert(db->test_expire, (unsigned char *)&key_ptr, sizeof(key_ptr), NULL, NULL);
-    size_t mem_post = zmalloc_used_memory();
-    db->test_expire_memory += (mem_post - mem_pre);
+    addKeyToTimeoutTable(db, key, when);
 
     int writable_replica = server.primary_host && server.repl_replica_ro == 0;
     if (c && writable_replica && !c->flag.primary) rememberReplicaKeyWithExpire(db, key);
