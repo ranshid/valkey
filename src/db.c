@@ -38,13 +38,14 @@
 #include <ctype.h>
 
 
-#define KEY_ST_KEYLEN 8 /* 8 bytes mstime + 8 bytes client ID. */
+#define KEY_ST_KEYLEN 16 /* 8 bytes mstime + 8 bytes client ID. */
 static int getKVStoreIndexForKey(sds key);
 /* Given client ID and timeout, write the resulting radix tree key in buf. */
 void encodeTTLKey(unsigned char *buf, robj *key, uint64_t timeout) {
     timeout = htonu64(timeout);
     memcpy(buf, &timeout, sizeof(timeout));
-    // memcpy(buf + 8, &key, sizeof(key));
+    uint64_t key_ptr = htonu64((uint64_t)key->ptr);
+    memcpy(buf + 8, (unsigned char *)&key_ptr, sizeof(key_ptr));
     if (sizeof(key) == 4) memset(buf + 12, 0, 4); /* Zero padding for 32bit target. */
 }
 
@@ -53,7 +54,10 @@ void encodeTTLKey(unsigned char *buf, robj *key, uint64_t timeout) {
 void decodeTTLKey(unsigned char *buf, uint64_t *timeout, robj **key) {
     memcpy(timeout, buf, sizeof(*timeout));
     *timeout = ntohu64(*timeout);
-    // memcpy(key, buf + 8, sizeof(*key));
+    uint64_t key_ptr;
+    memcpy(&key_ptr, buf + 8, sizeof(key_ptr));
+    key_ptr = ntohu64(key_ptr);
+    *key = (robj *)key_ptr;
 }
 
 /* Add the specified client id / timeout as a key in the radix tree we use
@@ -64,14 +68,8 @@ void addKeyToTimeoutTable(serverDb *db, robj *key, uint64_t timeout) {
 
 
     encodeTTLKey(buf, key, timeout);
-    rax *items;
     size_t mem_pre = zmalloc_used_memory();
-    if (!raxFind(db->test_expire, buf, sizeof(timeout), &items)) {
-        items = raxNew();
-        raxTryInsert(db->test_expire, buf, sizeof(buf), items, NULL);
-    }
-    uint64_t key_ptr = htonu64((uint64_t)key->ptr);
-    raxTryInsert(items, (unsigned char *)&key_ptr, sizeof(key_ptr), NULL, NULL);
+    raxTryInsert(db->test_expire, buf, KEY_ST_KEYLEN, NULL, NULL);
     size_t mem_post = zmalloc_used_memory();
     db->test_expire_memory += (mem_post - mem_pre);
 }
@@ -85,15 +83,8 @@ void removeKeyFromTimeoutTable(serverDb *db, robj *key) {
 
     unsigned char buf[KEY_ST_KEYLEN];
     encodeTTLKey(buf, key, timeout);
-    rax *items = NULL;
-    raxFind(db->test_expire, buf, sizeof(timeout), &items);
-    serverAssert(items);
-    uint64_t key_ptr = htonu64((uint64_t)key->ptr);
     size_t mem_pre = zmalloc_used_memory();
-    raxRemove(items, (unsigned char *)&key_ptr, sizeof(key_ptr), NULL);
-    if (raxSize(items) == 0) {
-        raxRemove(db->test_expire, buf, sizeof(timeout), NULL);
-    }
+    raxRemove(db->test_expire, buf, KEY_ST_KEYLEN, NULL);
     size_t mem_post = zmalloc_used_memory();
     db->test_expire_memory += (mem_post - mem_pre);
 }
