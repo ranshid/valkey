@@ -64,8 +64,14 @@ void addKeyToTimeoutTable(serverDb *db, robj *key, uint64_t timeout) {
 
 
     encodeTTLKey(buf, key, timeout);
+    rax *items;
     size_t mem_pre = zmalloc_used_memory();
-    raxTryInsert(db->test_expire, buf, sizeof(buf), NULL, NULL);
+    if (!raxFind(db->test_expire, buf, sizeof(timeout), &items)) {
+        items = raxNew();
+        raxTryInsert(db->test_expire, buf, sizeof(buf), items, NULL);
+    }
+    uint64_t key_ptr = htonu64((uint64_t)key->ptr);
+    raxTryInsert(items, (unsigned char *)&key_ptr, sizeof(key_ptr), NULL, NULL);
     size_t mem_post = zmalloc_used_memory();
     db->test_expire_memory += (mem_post - mem_pre);
 }
@@ -79,11 +85,19 @@ void removeKeyFromTimeoutTable(serverDb *db, robj *key) {
 
     unsigned char buf[KEY_ST_KEYLEN];
     encodeTTLKey(buf, key, timeout);
+    rax *items = NULL;
+    raxFind(db->test_expire, buf, sizeof(timeout), &items);
+    serverAssert(items);
+    uint64_t key_ptr = htonu64((uint64_t)key->ptr);
     size_t mem_pre = zmalloc_used_memory();
-    raxRemove(db->test_expire, buf, sizeof(buf), NULL);
+    raxRemove(items, (unsigned char *)&key_ptr, sizeof(key_ptr), NULL);
+    if (raxSize(items) == 0) {
+        raxRemove(db->test_expire, buf, sizeof(timeout), NULL);
+    }
     size_t mem_post = zmalloc_used_memory();
     db->test_expire_memory += (mem_post - mem_pre);
 }
+
 /*-----------------------------------------------------------------------------
  * C-level DB API
  *----------------------------------------------------------------------------*/
