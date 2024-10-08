@@ -38,26 +38,39 @@
 #include <ctype.h>
 
 
-#define KEY_ST_KEYLEN 10 /* 8 bytes mstime + 8 bytes client ID. */
+#define KEY_ST_KEYLEN 64 /* 8 bytes mstime + 8 bytes client ID. */
 static int getKVStoreIndexForKey(sds key);
 /* Given client ID and timeout, write the resulting radix tree key in buf. */
 void encodeTTLKey(unsigned char *buf, robj *key, uint64_t timeout) {
-    timeout = htonu64(timeout);
+    /*timeout = htonu64(timeout);
     memcpy(buf, &timeout, sizeof(timeout));
     uint64_t key_ptr = htonu64((uint64_t)key->ptr);
     memcpy(buf + 4, ((unsigned char *)&key_ptr) + 2, 6);
     if (sizeof(key) == 4) memset(buf + 12, 0, 7); /* Zero padding for 32bit target. */
+    uint64_t key_ptr = htonu64((uint64_t)key->ptr);
+    for (int i = 63; i >= 0; i--) {
+        buf[i] = (key_ptr & 1) ? '1' : '0';
+        key_ptr >>= 1;
+    }
 }
 
 /* Given a key encoded with encodeTimeoutKey(), resolve the fields and write
  * the timeout into *toptr and the client pointer into *cptr. */
 void decodeTTLKey(unsigned char *buf, uint64_t *timeout, robj **key) {
-    memcpy(timeout, buf, sizeof(*timeout));
+    /*memcpy(timeout, buf, sizeof(*timeout));
     *timeout = ntohu64(*timeout);
     uint64_t key_ptr;
     memcpy(&key_ptr, buf + 8, sizeof(key_ptr));
+    key_ptr = ntohu64(key_ptr);*/
+    uint64_t key_ptr = 0;
+    for (size_t i = 0; i < KEY_ST_KEYLEN; i++) {
+        key_ptr <<= 1; // Shift left by 1
+        if (buf[i] == '1') {
+            key_ptr |= 1; // Set the least significant bit
+        }
+    }
     key_ptr = ntohu64(key_ptr);
-    *key = (robj *)key_ptr;
+    (*key)->ptr = (robj *)key_ptr;
 }
 
 /* Add the specified client id / timeout as a key in the radix tree we use
