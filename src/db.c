@@ -1892,7 +1892,7 @@ void propagateDeletion(serverDb *db, robj *key, int lazy) {
 }
 
 /* Returns 1 if the expire value is expired, 0 otherwise. */
-static int timestampIsExpired(mstime_t when) {
+int timestampIsExpired(mstime_t when) {
     if (when < 0) return 0; /* no expire */
     mstime_t now = commandTimeSnapshot();
 

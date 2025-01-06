@@ -2563,6 +2563,7 @@ int validateProcTitleTemplate(const char *template);
 int serverCommunicateSystemd(const char *sd_notify_msg);
 void serverSetCpuAffinity(const char *cpulist);
 void dictVanillaFree(void *val);
+int timestampIsExpired(mstime_t when);
 
 /* ERROR STATS constants */
 
@@ -3217,8 +3218,9 @@ robj *setTypeDup(robj *o);
 #define HASH_SET_TAKE_VALUE (1 << 1)
 #define HASH_SET_COPY 0
 
-typedef struct hashTypeEntry hashTypeEntry;
-hashTypeEntry *hashTypeCreateEntry(sds field, sds value);
+typedef uint8_t hashTypeEntry;
+hashTypeEntry *hashTypeCreateEntry(sds field, sds value, long long ttl);
+hashTypeEntry *hashTypeCreateEntryWithExpiry(sds field, sds value, long long ttl);
 sds hashTypeEntryGetField(const hashTypeEntry *entry);
 sds hashTypeEntryGetValue(const hashTypeEntry *entry);
 size_t hashTypeEntryAllocSize(hashTypeEntry *entry);
@@ -3244,6 +3246,7 @@ sds hashTypeCurrentObjectNewSds(hashTypeIterator *hi, int what);
 robj *hashTypeLookupWriteOrCreate(client *c, robj *key);
 robj *hashTypeGetValueObject(robj *o, sds field);
 int hashTypeSet(robj *o, sds field, sds value, int flags);
+int hashTypeSetExpire(robj *o, sds field, long long ttl);
 robj *hashTypeDup(robj *o);
 
 /* Pub / Sub */
@@ -3733,6 +3736,7 @@ void hgetallCommand(client *c);
 void hexistsCommand(client *c);
 void hscanCommand(client *c);
 void hrandfieldCommand(client *c);
+void hexpireCommand(client *c);
 void configSetCommand(client *c);
 void configGetCommand(client *c);
 void configResetStatCommand(client *c);

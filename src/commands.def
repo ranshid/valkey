@@ -3418,6 +3418,38 @@ struct COMMAND_ARG HEXISTS_Args[] = {
 {MAKE_ARG("field",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
 };
 
+/********** HEXPIRE ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* HEXPIRE history */
+#define HEXPIRE_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* HEXPIRE tips */
+#define HEXPIRE_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* HEXPIRE key specs */
+keySpec HEXPIRE_Keyspecs[1] = {
+{NULL,CMD_KEY_RW|CMD_KEY_UPDATE,KSPEC_BS_INDEX,.bs.index={1},KSPEC_FK_RANGE,.fk.range={0,1,0}}
+};
+#endif
+
+/* HEXPIRE fields argument table */
+struct COMMAND_ARG HEXPIRE_fields_Subargs[] = {
+{MAKE_ARG("numfields",ARG_TYPE_INTEGER,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("field",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_MULTIPLE,0,NULL)},
+};
+
+/* HEXPIRE argument table */
+struct COMMAND_ARG HEXPIRE_Args[] = {
+{MAKE_ARG("key",ARG_TYPE_KEY,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("unix-time-milliseconds",ARG_TYPE_INTEGER,0,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("fields",ARG_TYPE_BLOCK,-1,"FIELDS",NULL,NULL,CMD_ARG_NONE,2,NULL),.subargs=HEXPIRE_fields_Subargs},
+};
+
 /********** HGET ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
@@ -10960,6 +10992,7 @@ struct COMMAND_STRUCT serverCommandTable[] = {
 /* hash */
 {MAKE_CMD("hdel","Deletes one or more fields and their values from a hash. Deletes the hash if no fields remain.","O(N) where N is the number of fields to be removed.","2.0.0",CMD_DOC_NONE,NULL,NULL,"hash",COMMAND_GROUP_HASH,HDEL_History,1,HDEL_Tips,0,hdelCommand,-3,CMD_WRITE|CMD_FAST,ACL_CATEGORY_HASH,HDEL_Keyspecs,1,NULL,2),.args=HDEL_Args},
 {MAKE_CMD("hexists","Determines whether a field exists in a hash.","O(1)","2.0.0",CMD_DOC_NONE,NULL,NULL,"hash",COMMAND_GROUP_HASH,HEXISTS_History,0,HEXISTS_Tips,0,hexistsCommand,3,CMD_READONLY|CMD_FAST,ACL_CATEGORY_HASH,HEXISTS_Keyspecs,1,NULL,2),.args=HEXISTS_Args},
+{MAKE_CMD("hexpire","Set expiry time on hash object.","O(1) for each field assigned with TTL, so O(N) to add N TTLs when the command is called with multiple fields.","7.2.4",CMD_DOC_NONE,NULL,NULL,"hash",COMMAND_GROUP_HASH,HEXPIRE_History,0,HEXPIRE_Tips,0,hexpireCommand,-4,CMD_WRITE|CMD_DENYOOM|CMD_FAST,ACL_CATEGORY_HASH,HEXPIRE_Keyspecs,1,NULL,3),.args=HEXPIRE_Args},
 {MAKE_CMD("hget","Returns the value of a field in a hash.","O(1)","2.0.0",CMD_DOC_NONE,NULL,NULL,"hash",COMMAND_GROUP_HASH,HGET_History,0,HGET_Tips,0,hgetCommand,3,CMD_READONLY|CMD_FAST,ACL_CATEGORY_HASH,HGET_Keyspecs,1,NULL,2),.args=HGET_Args},
 {MAKE_CMD("hgetall","Returns all fields and values in a hash.","O(N) where N is the size of the hash.","2.0.0",CMD_DOC_NONE,NULL,NULL,"hash",COMMAND_GROUP_HASH,HGETALL_History,0,HGETALL_Tips,1,hgetallCommand,2,CMD_READONLY,ACL_CATEGORY_HASH,HGETALL_Keyspecs,1,NULL,1),.args=HGETALL_Args},
 {MAKE_CMD("hincrby","Increments the integer value of a field in a hash by a number. Uses 0 as initial value if the field doesn't exist.","O(1)","2.0.0",CMD_DOC_NONE,NULL,NULL,"hash",COMMAND_GROUP_HASH,HINCRBY_History,0,HINCRBY_Tips,0,hincrbyCommand,4,CMD_WRITE|CMD_DENYOOM|CMD_FAST,ACL_CATEGORY_HASH,HINCRBY_Keyspecs,1,NULL,3),.args=HINCRBY_Args},

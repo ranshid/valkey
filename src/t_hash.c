@@ -27,71 +27,129 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "hashtable.h"
+#include "sds.h"
 #include "server.h"
 #include <math.h>
-
-struct hashTypeEntry {
-    sds value;
-    unsigned char field_offset;
-    unsigned char field_data[];
-};
+#include <string.h>
 
 /* takes ownership of value, does not take ownership of field */
-hashTypeEntry *hashTypeCreateEntry(const sds field, sds value) {
+hashTypeEntry *hashTypeCreateEntry(const sds field, sds value, long long ttl) {
+    uint8_t hdr_size;
     size_t field_size = sdscopytobuffer(NULL, 0, field, NULL);
-
-    size_t total_size = sizeof(hashTypeEntry) + field_size;
-    hashTypeEntry *entry = zmalloc(total_size);
-
-    entry->value = value;
-    sdscopytobuffer(entry->field_data, field_size, field, &entry->field_offset);
-    return entry;
+    size_t value_size = sizeof(sds);
+    size_t metadata_size = (ttl < 0) ? 0 : sizeof(ttl);
+    size_t total_size = metadata_size + field_size + value_size;
+    uint8_t *entry_buf = zmalloc(total_size);
+    memcpy(entry_buf, &ttl, metadata_size);
+    sdscopytobuffer(entry_buf + metadata_size, total_size, field, &hdr_size);
+    memcpy(entry_buf + metadata_size + field_size, &value, sizeof(sds));
+    return entry_buf + metadata_size + hdr_size;
 }
 
 sds hashTypeEntryGetField(const hashTypeEntry *entry) {
-    const unsigned char *field = entry->field_data + entry->field_offset;
-    return (sds)field;
+    return (sds)entry;
 }
 
 sds hashTypeEntryGetValue(const hashTypeEntry *entry) {
-    return entry->value;
+    sds value;
+    memcpy(&value, entry + sdslen((sds)entry) + 1, sizeof(sds));
+    return value;
 }
 
 /* frees previous value, takes ownership of new value */
 static void hashTypeEntryReplaceValue(hashTypeEntry *entry, sds value) {
-    sdsfree(entry->value);
-    entry->value = value;
-}
-
-size_t hashTypeEntryAllocSize(hashTypeEntry *entry) {
-    size_t size = zmalloc_usable_size(entry);
-    size += sdsAllocSize(entry->value);
-    return size;
-}
-
-hashTypeEntry *hashTypeEntryDefrag(hashTypeEntry *entry, void *(*defragfn)(void *), sds (*sdsdefragfn)(sds)) {
-    hashTypeEntry *new_entry = defragfn(entry);
-    if (new_entry) entry = new_entry;
-
-    sds new_value = sdsdefragfn(entry->value);
-    if (new_value) entry->value = new_value;
-
-    return entry;
+    sdsfree(hashTypeEntryGetValue(entry));
+    memcpy(entry + sdslen((sds)entry) + 1, &value, sizeof(sds));
 }
 
 void dismissHashTypeEntry(hashTypeEntry *entry) {
     /* Only dismiss values memory since the field size usually is small. */
-    dismissSds(entry->value);
+    dismissSds(hashTypeEntryGetValue(entry));
+}
+
+static inline int hashTypeEntryHasExpiry(const hashTypeEntry *entry) {
+    return (entry[-1] & (1 << SDS_TYPE_BITS)) != 0;
+}
+
+static inline void *hashTypeEntryGetAllocPtr(const hashTypeEntry *entry, size_t *offset) {
+    char *entry_start = sdsAllocPtr((sds)entry);
+    if (hashTypeEntryHasExpiry(entry))
+        entry_start -= sizeof(long long);
+    if (offset) *offset = (char *)entry - entry_start;
+    return entry_start;
 }
 
 void freeHashTypeEntry(hashTypeEntry *entry) {
-    sdsfree(entry->value);
-    zfree(entry);
+    sdsfree(hashTypeEntryGetValue(entry));
+    zfree(hashTypeEntryGetAllocPtr(entry, NULL));
+}
+
+size_t hashTypeEntryAllocSize(hashTypeEntry *entry) {
+    size_t size = zmalloc_usable_size(hashTypeEntryGetAllocPtr(entry, NULL));
+    size += sdsAllocSize(hashTypeEntryGetValue(entry));
+    return size;
+}
+
+static inline void *hashTypeEntryGetMetadata(const hashTypeEntry *entry) {
+    if (hashTypeEntryHasExpiry(entry))
+        return hashTypeEntryGetAllocPtr(entry, NULL);
+    return NULL;
+}
+
+static inline long long hashTypeEntryGetExpiry(const hashTypeEntry *entry) {
+    long long expiry = -1;
+    if (hashTypeEntryHasExpiry(entry)) {
+        memcpy(&expiry, hashTypeEntryGetMetadata(entry), sizeof(expiry));
+    }
+    return expiry;
+}
+
+static inline hashTypeEntry *hashTypeEntrySetExpiry(hashTypeEntry *entry, long long ttl) {
+    if (hashTypeEntryHasExpiry(entry)) {
+        memcpy(hashTypeEntryGetMetadata(entry), &ttl, sizeof(ttl));
+        return entry;
+    }
+    hashTypeEntry *new_entry = hashTypeCreateEntry(hashTypeEntryGetField(entry), hashTypeEntryGetValue(entry), ttl);
+    freeHashTypeEntry(entry);
+    return new_entry;
+}
+
+hashTypeEntry *hashTypeEntryDefrag(hashTypeEntry *entry, void *(*defragfn)(void *), sds (*sdsdefragfn)(sds)) {
+    size_t entry_offset;
+    char *entry_buf = hashTypeEntryGetAllocPtr(entry, &entry_offset);
+    char *new_entry_buf = defragfn(entry_buf);
+    if (new_entry_buf) entry = (hashTypeEntry *)(new_entry_buf + entry_offset);
+
+    sds new_value = sdsdefragfn(hashTypeEntryGetValue(entry));
+    if (new_value) hashTypeEntryReplaceValue(entry, new_value);
+
+    return entry;
+}
+
+static int hashTypeEntryIsExpired(hashTypeEntry *entry) {
+    /* Don't expire anything while loading. It will be done later. */
+    if (server.loading) return 0;
+    if (!timestampIsExpired(hashTypeEntryGetExpiry(entry))) return 0;
+    if (server.primary_host == NULL && server.import_mode) {
+        if (server.current_client && server.current_client->flag.import_source) return 0;
+    }
+    return 1;
 }
 
 /*-----------------------------------------------------------------------------
  * Hash type API
  *----------------------------------------------------------------------------*/
+
+int hashTypeExpireIfNeeded(robj *o, hashTypeEntry *entry) {
+    if (o->encoding == OBJ_ENCODING_LISTPACK) return 0;
+
+    if (hashTypeEntryIsExpired(entry)) {
+        hashtableDelete(o->ptr, entry);
+        return 1;
+    }
+    return 0;
+}
 
 /* Check the length of a number of objects to see if we need to convert a
  * listpack to a real hash. Note that we only check string encoded objects
@@ -156,7 +214,8 @@ int hashTypeGetFromListpack(robj *o, sds field, unsigned char **vstr, unsigned i
 sds hashTypeGetFromHashTable(robj *o, sds field) {
     serverAssert(o->encoding == OBJ_ENCODING_HASHTABLE);
     void *found_element;
-    if (!hashtableFind(o->ptr, field, &found_element)) return NULL;
+    if (!hashtableFind(o->ptr, field, &found_element) || hashTypeExpireIfNeeded(o, found_element)) return NULL;
+
     return hashTypeEntryGetValue(found_element);
 }
 
@@ -298,9 +357,9 @@ int hashTypeSet(robj *o, sds field, sds value, int flags) {
 
         hashtablePosition position;
         void *existing;
-        if (hashtableFindPositionForInsert(ht, field, &position, &existing)) {
+        if (hashtableFindPositionForInsert(ht, field, &position, &existing) || hashTypeExpireIfNeeded(o, existing)) {
             /* does not exist yet */
-            hashTypeEntry *entry = hashTypeCreateEntry(field, v);
+            hashTypeEntry *entry = hashTypeCreateEntry(field, v, -1);
             hashtableInsertAtPosition(ht, entry, &position);
         } else {
             /* exists: replace value */
@@ -316,6 +375,19 @@ int hashTypeSet(robj *o, sds field, sds value, int flags) {
     if (flags & HASH_SET_TAKE_FIELD && field) sdsfree(field);
     if (flags & HASH_SET_TAKE_VALUE && value) sdsfree(value);
     return update;
+}
+
+int hashTypeSetExpire(robj *o, sds field, long long ttl) {
+    if (o->encoding == OBJ_ENCODING_LISTPACK) {
+        hashTypeConvert(o, OBJ_ENCODING_HASHTABLE);
+    }
+    hashtable *ht = o->ptr;
+    void **entry_ref = NULL;
+    if ((entry_ref = hashtableFindRef(ht, field))) {
+        *entry_ref = hashTypeEntrySetExpiry(*entry_ref, ttl);
+        return 1;
+    }
+    return 0;
 }
 
 /* Delete an element from a hash.
@@ -508,7 +580,7 @@ void hashTypeConvertListpack(robj *o, int enc) {
         while (hashTypeNext(&hi) != C_ERR) {
             sds field = hashTypeCurrentObjectNewSds(&hi, OBJ_HASH_FIELD);
             sds value = hashTypeCurrentObjectNewSds(&hi, OBJ_HASH_VALUE);
-            hashTypeEntry *entry = hashTypeCreateEntry(field, value);
+            hashTypeEntry *entry = hashTypeCreateEntry(field, value, -1);
             sdsfree(field);
             if (!hashtableAdd(ht, entry)) {
                 freeHashTypeEntry(entry);
@@ -565,7 +637,7 @@ robj *hashTypeDup(robj *o) {
             sds value = hashTypeCurrentFromHashTable(&hi, OBJ_HASH_VALUE);
 
             /* Add a field-value pair to a new hash object. */
-            hashTypeEntry *entry = hashTypeCreateEntry(field, sdsdup(value));
+            hashTypeEntry *entry = hashTypeCreateEntry(field, sdsdup(value), -1);
             hashtableAdd(ht, entry);
         }
         hashTypeResetIterator(&hi);
@@ -597,16 +669,20 @@ void hashReplyFromListpackEntry(client *c, listpackEntry *e) {
  * 'val' can be NULL in which case it's not extracted. */
 static void hashTypeRandomElement(robj *hashobj, unsigned long hashsize, listpackEntry *field, listpackEntry *val) {
     if (hashobj->encoding == OBJ_ENCODING_HASHTABLE) {
-        void *entry;
-        hashtableFairRandomEntry(hashobj->ptr, &entry);
-        sds sds_field = hashTypeEntryGetField(entry);
-        field->sval = (unsigned char *)sds_field;
-        field->slen = sdslen(sds_field);
-        if (val) {
-            hashTypeEntry *hash_entry = entry;
-            sds sds_val = hashTypeEntryGetValue(hash_entry);
-            val->sval = (unsigned char *)sds_val;
-            val->slen = sdslen(sds_val);
+        void *entry = NULL;
+        while (!entry) {
+            hashtableFairRandomEntry(hashobj->ptr, &entry);
+            if (hashTypeExpireIfNeeded(hashobj, entry)) continue;
+            sds sds_field = hashTypeEntryGetField(entry);
+            field->sval = (unsigned char *)sds_field;
+            field->slen = sdslen(sds_field);
+            if (val) {
+                hashTypeEntry *hash_entry = entry;
+                sds sds_val = hashTypeEntryGetValue(hash_entry);
+                val->sval = (unsigned char *)sds_val;
+                val->slen =
+                    sdslen(sds_val);
+            }
         }
     } else if (hashobj->encoding == OBJ_ENCODING_LISTPACK) {
         lpRandomPair(hashobj->ptr, hashsize, field, val);
@@ -778,6 +854,9 @@ void hgetCommand(client *c) {
     if ((o = lookupKeyReadOrReply(c, c->argv[1], shared.null[c->resp])) == NULL || checkType(c, o, OBJ_HASH)) return;
 
     addHashFieldToReply(c, o, c->argv[2]->ptr);
+    if (hashTypeLength(o) == 0) {
+        dbDelete(c->db, c->argv[1]);
+    }
 }
 
 void hmgetCommand(client *c) {
@@ -792,6 +871,9 @@ void hmgetCommand(client *c) {
     addReplyArrayLen(c, c->argc - 2);
     for (i = 2; i < c->argc; i++) {
         addHashFieldToReply(c, o, c->argv[i]->ptr);
+    }
+    if (hashTypeLength(o) == 0) {
+        dbDelete(c->db, c->argv[1]);
     }
 }
 
@@ -875,6 +957,7 @@ void genericHgetallCommand(client *c, int flags) {
 
     hashTypeInitIterator(o, &hi);
     while (hashTypeNext(&hi) != C_ERR) {
+        if (hashTypeExpireIfNeeded(o, hi.next)) continue;
         if (flags & OBJ_HASH_FIELD) {
             addHashIteratorCursorToReply(wpc, &hi, OBJ_HASH_FIELD);
             count++;
@@ -937,6 +1020,26 @@ static void hrandfieldReplyWithListpack(writePreparedClient *wpc, unsigned int c
     }
 }
 
+void hexpireCommand(client *c) {
+    int i, assigned = 0;
+    robj *o;
+    long long milliseconds = 0; /* initialized to avoid any harmness warning */
+
+    if (getLongLongFromObject(c->argv[2], &milliseconds) != C_OK) {
+        addReplyError(c, "expiration is NaN");
+        return;
+    }
+
+    if ((o = hashTypeLookupWriteOrCreate(c, c->argv[1])) == NULL) return;
+    hashTypeConvert(o, OBJ_ENCODING_HASHTABLE);
+
+
+    for (i = 5; i < c->argc; i++) assigned += hashTypeSetExpire(o, c->argv[i]->ptr, milliseconds);
+    server.dirty += (c->argc - 5);
+    addReplyLongLong(c, assigned);
+}
+
+
 /* How many times bigger should be the hash compared to the requested size
  * for us to not use the "remove elements" strategy? Read later in the
  * implementation for more info. */
@@ -981,9 +1084,11 @@ void hrandfieldWithCountCommand(client *c, long l, int withvalues) {
         else
             addWritePreparedReplyArrayLen(wpc, count);
         if (hash->encoding == OBJ_ENCODING_HASHTABLE) {
-            while (count--) {
+            while (count && hashtableSize(hash->ptr) > 0) {
                 void *entry;
                 hashtableFairRandomEntry(hash->ptr, &entry);
+                if (hashTypeExpireIfNeeded(hash, entry)) continue;
+                count--;
                 sds field = hashTypeEntryGetField(entry);
                 sds value = hashTypeEntryGetValue(entry);
                 if (withvalues && c->resp > 2) addWritePreparedReplyArrayLen(wpc, 2);
