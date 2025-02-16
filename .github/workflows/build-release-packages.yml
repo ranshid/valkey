@@ -4,6 +4,7 @@ on:
   release:
     types: [published]
   push:
+    types: [push]
     paths:
       - '.github/workflows/build-release-packages.yml'
       - '.github/workflows/call-build-linux-arm-packages.yml'
