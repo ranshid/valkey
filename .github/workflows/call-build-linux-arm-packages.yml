@@ -45,11 +45,11 @@ jobs:
         with:
           ref: ${{ inputs.version }}
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-region: ${{ inputs.region }}
-          role-to-assume: ${{ secrets.role_to_assume }}
+      # - name: Configure AWS credentials
+      #  uses: aws-actions/configure-aws-credentials@v4
+      #  with:
+      #    aws-region: ${{ inputs.region }}
+      #    role-to-assume: ${{ secrets.role_to_assume }}
 
       - name: Make Valkey
         uses: uraimo/run-on-arch-action@v2
