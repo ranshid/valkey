@@ -107,7 +107,7 @@ start_server {tags {"hashexpire"}} {
         set e
     } {ERR syntax error}
 
-# fields != acutal number of fields is accepted!
+# fields != actual number of fields is accepted!
     # test {HSETEX EX - mismatched field/value count} {
     #     catch {r HSETEX myhash EX 10 FIELDS 2 field1 val1} e
     #     set e
