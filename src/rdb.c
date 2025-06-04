@@ -992,7 +992,6 @@ ssize_t rdbSaveObject(rio *rdb, robj *o, robj *key, int dbid) {
                         hashtableResetIterator(&iter);
                         return -1;
                     }
-                    serverLog(LL_NOTICE, "save key %s with expiry: %lld", field, expiry);
                     nwritten += n;
                 }
             }
@@ -2195,7 +2194,6 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
             long long itemexpiry = -1;
             if (rdbtype == RDB_TYPE_HASH_2) {
                 itemexpiry = rdbLoadMillisecondTime(rdb, RDB_VERSION);
-                serverLog(LL_NOTICE, "load key %s with expiry: %lld", field, itemexpiry);
                 if (itemexpiry == LLONG_MAX && rioGetReadError(rdb)) return NULL;
             }
 

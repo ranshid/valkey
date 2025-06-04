@@ -653,7 +653,7 @@ int hashTypeGetValue(robj *o, sds field, unsigned char **vstr, unsigned int *vle
 int hashTypeGetExpiry(robj *o, sds field, long long *expiry) {
     if (o->encoding == OBJ_ENCODING_LISTPACK) {
         if (hashTypeExists(o, field)) {
-            if (expiry) *expiry = -1;
+            if (expiry) *expiry = EXPIRY_NONE;
             return C_OK;
         }
     } else if (o->encoding == OBJ_ENCODING_HASHTABLE) {
@@ -1177,20 +1177,22 @@ robj *hashTypeDup(robj *o) {
     } else if (o->encoding == OBJ_ENCODING_HASHTABLE) {
         hashtable *ht = hashtableCreate(&hashHashtableType);
         hashtableExpand(ht, hashtableSize((const hashtable *)o->ptr));
+        hobj = createObject(OBJ_HASH, ht);
+        hobj->encoding = OBJ_ENCODING_HASHTABLE;
 
         hashTypeInitIterator(o, &hi);
         while (hashTypeNext(&hi) != C_ERR) {
             /* Extract a field-value pair from an original hash object.*/
             sds field = hashTypeCurrentFromHashTable(&hi, OBJ_HASH_FIELD);
             sds value = hashTypeCurrentFromHashTable(&hi, OBJ_HASH_VALUE);
-
+            long long expiry = hashTypeEntryGetExpiry(hi.next);
             /* Add a field-value pair to a new hash object. */
-            hashTypeEntry *entry = hashTypeCreateEntry(field, sdsdup(value), EXPIRY_NONE);
+            hashTypeEntry *entry = hashTypeCreateEntry(field, sdsdup(value), expiry);
             hashtableAdd(ht, entry);
+            if (expiry != EXPIRY_NONE)
+                hashTypeTrackEntry(hobj, entry);
         }
         hashTypeResetIterator(&hi);
-        hobj = createObject(OBJ_HASH, ht);
-        hobj->encoding = OBJ_ENCODING_HASHTABLE;
     } else {
         serverPanic("Unknown hash encoding");
     }
