@@ -122,6 +122,7 @@ hashtable *hashtableCreate(hashtableType *type);
 void hashtableRelease(hashtable *ht);
 void hashtableEmpty(hashtable *ht, void(callback)(hashtable *));
 hashtableType *hashtableGetType(hashtable *ht);
+hashtableType *hashtableSetType(hashtable *ht, hashtableType *type);
 void *hashtableMetadata(hashtable *ht);
 size_t hashtableSize(const hashtable *ht);
 size_t hashtableBuckets(hashtable *ht);

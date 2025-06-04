@@ -1139,6 +1139,13 @@ hashtableType *hashtableGetType(hashtable *ht) {
     return ht->type;
 }
 
+/* Set the hashtable type and returns the old type of the hashtable. */
+hashtableType *hashtableSetType(hashtable *ht, hashtableType *type) {
+    hashtableType *oldtype = ht->type;
+    ht->type = type;
+    return oldtype;
+}
+
 /* Returns a pointer to the table's metadata (userdata) section. */
 void *hashtableMetadata(hashtable *ht) {
     return &ht->metadata;

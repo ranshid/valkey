@@ -688,6 +688,15 @@ hashtableType hashHashtableType = {
     .accessElement = hashHashtableTypeAccess,
 };
 
+hashtableType hashWithVolatileItemsHashtableType = {
+    .hashFunction = dictSdsHash,
+    .entryGetKey = hashHashtableTypeGetKey,
+    .keyCompare = hashtableSdsKeyCompare,
+    .entryDestructor = hashHashtableTypeDestructor,
+    .getMetadataSize = hashHashtableTypeMetadataSize,
+    .accessElement = hashHashtableTypeAccess,
+};
+
 /* Hashtable type without destructor */
 hashtableType sdsReplyHashtableType = {
     .hashFunction = dictSdsCaseHash,
