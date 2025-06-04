@@ -10,29 +10,6 @@ return ""
 
 start_server {tags {"hashexpire"}} {    
 
-    test {HSETEX EX - test if fields expire} {
-        r flushall
-        # Set TTL and use HSETEX to add field1 with expiry
-        set ttl 100        
-        r HSETEX myhash EX $ttl FIELDS 1 field1 val1
-        assert_equal $ttl [r HTTL myhash FIELDS 1 field1]
-
-        # Reset hash, set new fields without expiry (to prevent the deletion of the hash on expiry)        
-        r DEL myhash
-        r HSET myhash field2 "hello" field3 "world"
-
-        # Add field1 again with short expiry
-        set ttl 1
-        r HSETEX myhash EX $ttl FIELDS 1 field1 val1
-
-        # Wait for TTL to expire
-        after 1100
-
-        # field1 should be expired, others should remain
-        assert_equal {0} [r HEXISTS myhash field1]
-        assert_equal {2} [r HLEN myhash]
-    }
-
     test {HSETEX KEEPTTL - preserves existing TTL of field} {
         r FLUSHALL
 
@@ -116,31 +93,6 @@ start_server {tags {"hashexpire"}} {
 
 
 ###### PX #######
-
-
-    test {HSETEX PX - test if fields expire} {
-        r FLUSHALL
-        # Set TTL in milliseconds and use HSETEX to add field1 with expiry
-            set ttl 2000
-        r HSETEX myhash PX $ttl FIELDS 1 field1 val1
-        set reported_ttl [r HPTTL myhash FIELDS 1 field1]
-        assert { $reported_ttl <= $ttl && $reported_ttl > 0 }
-
-        # Reset hash, set new fields without expiry
-        r DEL myhash
-        r HSET myhash field2 "hello" field3 "world"
-
-        # Add field1 again with short expiry
-        set ttl 10
-        r HSETEX myhash PX $ttl FIELDS 1 field1 val1
-
-        # Wait for TTL to expire
-        after 20
-
-        # field1 should be expired, others should remain
-        assert_equal {0} [r HEXISTS myhash field1]
-        assert_equal {2} [r HLEN myhash]
-    }
 
     test {HSETEX PX - test negative ttl} {
         set ttl -50
@@ -248,45 +200,6 @@ start_server {tags {"hashexpire"}} {
 
     #################### Lazy Expiry ########################
 
-    proc test_lazy_expiry {mode ttl desc} {
-        test "HSETEX $mode - lazy expiry with $desc" {
-            r FLUSHALL
-            r debug SET-ACTIVE-EXPIRE no
-
-            if {$mode eq "EX"} {
-                r HSETEX myhash EX $ttl FIELDS 1 field1 val1
-                set wait [expr {$ttl * 1000 + 100}]
-            } elseif {$mode eq "PX"} {
-                r HSETEX myhash PX $ttl FIELDS 1 field1 val1
-                set wait [expr {$ttl + 100}]
-            } elseif {$mode eq "EXAT"} {
-                set now [clock seconds]
-                r HSETEX myhash EXAT [expr {$now + $ttl}] FIELDS 1 field1 val1
-                set wait [expr {$ttl * 1000 + 100}]
-            } elseif {$mode eq "PXAT"} {
-                set now [clock milliseconds]
-                r HSETEX myhash PXAT [expr {$now + $ttl}] FIELDS 1 field1 val1
-                set wait [expr {$ttl + 100}]
-            }
-
-            after $wait
-
-            # Still present due to lazy expiry
-            assert_equal 1 [r HLEN myhash]
-
-            # Trigger expiry
-            catch {r HGET myhash field1}
-            assert_equal 0 [r HLEN myhash]
-
-            r debug SET-ACTIVE-EXPIRE yes
-        }
-    }
-
-    test_lazy_expiry EX 1 "relative seconds"
-    test_lazy_expiry PX 10 "relative milliseconds"
-    test_lazy_expiry EXAT 1 "absolute seconds"
-    test_lazy_expiry PXAT 10 "absolute milliseconds"
-
     test {HGETALL skips expired fields without triggering lazy expiry} {
         r FLUSHALL
         r DEBUG SET-ACTIVE-EXPIRE no
@@ -362,36 +275,6 @@ start_server {tags {"hashexpire"}} {
         assert {$moved_ttl > 0 && $moved_ttl <= $original_ttl}
     }
 
-    test {HSETEX - lazy expiry with multiple fields, one expired} {
-        r FLUSHALL
-        r debug SET-ACTIVE-EXPIRE no
-
-        # This test verifies that lazy expiry is applied at the field level,
-        # not at the hash key level. Even if one field's TTL expires,
-        # the key itself should still be accessible, and other fields
-        # that haven't expired must remain unaffected until explicitly expired or accessed.
-
-        # field1 with short TTL (10ms), field2 is persistent (no TTL)
-        r HSETEX myhash PX 10 FIELDS 1 field1 shortlived
-        r HSET myhash field2 persistent
-
-        # Wait for field1 to expire
-        after 20
-
-        # Both fields should still be present due to lazy expiry
-        assert_equal 2 [r HLEN myhash]
-
-        # Accessing field1 triggers its lazy expiry
-        r HGET myhash field1
-
-        # field1 should now be gone, but field2 remains
-        assert_equal 1 [r HLEN myhash]
-        assert_equal persistent [r HGET myhash field2]
-
-        r debug SET-ACTIVE-EXPIRE yes
-    }
-
-
 # error
     # test {HEXPIRE - extend TTL of expired field before lazy deletion} {
     #     r FLUSHALL
@@ -421,85 +304,59 @@ start_server {tags {"hashexpire"}} {
     #     r debug SET-ACTIVE-EXPIRE yes
     # }
 
-    test {HSET - overwrite lazily expired field without TTL clears expiration} {
-        r FLUSHALL
-        r debug SET-ACTIVE-EXPIRE no
-
-        # This test verifies that if a field has expired (but not yet lazily deleted),
-        # and it is overwritten using a plain HSET (i.e., no TTL),
-        # Redis treats the field as still existing and updates it,
-        # effectively clearing the old TTL and making the field persistent.
-        # TODO: Is this the desired behavior though? shouldn't the expired field be removed anyway and the command to fail?
-
-        r HSETEX myhash PX 10 FIELDS 1 field1 oldval
-        after 20
-
-        # Field should still be present in memory due to lazy expiry
-        assert_equal 1 [r HLEN myhash]
-
-        # Overwrite with HSET (no TTL) before accessing
-        r HSET myhash field1 newval
-
-        # TTL should now be gone; field becomes persistent
-        set ttl [r HPTTL myhash FIELDS 1 field1]
-        assert_equal -1 $ttl
-        assert_equal newval [r HGET myhash field1]
-
-        r debug SET-ACTIVE-EXPIRE yes
-    }
-
-    test {HSET - overwrite unexpired field removes TTL} {
-        r FLUSHALL
-        r debug SET-ACTIVE-EXPIRE no
-
-        # This test verifies that overwriting a field with HSET,
-        # even while its TTL is still valid (not expired),
-        # clears the TTL and makes the field persistent.
-        # This behavior is consistent with how HSET works for normal keys.
-
-        # Set field with long TTL
-        r HSETEX myhash PX 1000 FIELDS 1 field1 val1
-
-        # Confirm TTL is active
-        set before [r HPTTL myhash FIELDS 1 field1]    
-        assert {$before > 0}
-
-        # Overwrite with HSET before TTL expires
-        r HSET myhash field1 newval
-
-        # TTL should now be gone
-        set after [r HPTTL myhash FIELDS 1 field1]
-        assert_equal -1 $after
-        assert_equal newval [r HGET myhash field1]
-
-        r debug SET-ACTIVE-EXPIRE yes
-    }
-
-test {HDEL - lazily expired field can be deleted directly} {
+test {HSET - overwrite lazily expired field without TTL clears expiration} {
     r FLUSHALL
     r debug SET-ACTIVE-EXPIRE no
 
-    # This test ensures that if a field's TTL has expired but hasn't been cleaned up yet,
-    # calling HDEL removes it without first triggering expiration. This proves that deletion
-    # takes precedence and doesn't require accessing the value or triggering lazy expiry logic.
+    # This test verifies that if a field has expired (but not yet lazily deleted),
+    # and it is overwritten using a plain HSET (i.e., no TTL),
+    # Redis treats the field as still existing and updates it,
+    # effectively clearing the old TTL and making the field persistent.
+    # TODO: Is this the desired behavior though? shouldn't the expired field be removed anyway and the command to fail?
 
-    r HSETEX myhash PX 10 FIELDS 1 field1 val1
+    r HSETEX myhash PX 10 FIELDS 1 field1 oldval
     after 20
 
-    # Confirm field is still present in memory (lazy expired)
+    # Field should still be present in memory due to lazy expiry
     assert_equal 1 [r HLEN myhash]
 
-    # Delete it directly
-    r HDEL myhash field1
+    # Overwrite with HSET (no TTL) before accessing
+    r HSET myhash field1 newval
 
-    # Confirm field is gone and hash is empty
-    assert_equal 0 [r HEXISTS myhash field1]
-    assert_equal 0 [r HLEN myhash]
+    # TTL should now be gone; field becomes persistent
+    set ttl [r HPTTL myhash FIELDS 1 field1]
+    assert_equal -1 $ttl
+    assert_equal newval [r HGET myhash field1]
 
     r debug SET-ACTIVE-EXPIRE yes
 }
 
+test {HSET - overwrite unexpired field removes TTL} {
+    r FLUSHALL
+    r debug SET-ACTIVE-EXPIRE no
 
+    # This test verifies that overwriting a field with HSET,
+    # even while its TTL is still valid (not expired),
+    # clears the TTL and makes the field persistent.
+    # This behavior is consistent with how HSET works for normal keys.
+
+    # Set field with long TTL
+    r HSETEX myhash PX 1000 FIELDS 1 field1 val1
+
+    # Confirm TTL is active
+    set before [r HPTTL myhash FIELDS 1 field1]    
+    assert {$before > 0}
+
+    # Overwrite with HSET before TTL expires
+    r HSET myhash field1 newval
+
+    # TTL should now be gone
+    set after [r HPTTL myhash FIELDS 1 field1]
+    assert_equal -1 $after
+    assert_equal newval [r HGET myhash field1]
+
+    r debug SET-ACTIVE-EXPIRE yes
+}
 
 test {HDEL - lazily expired field is removed without triggering expiry logic} {
     r FLUSHALL
@@ -539,39 +396,6 @@ test {HDEL - lazily expired field is removed without triggering expiry logic} {
 
     r debug SET-ACTIVE-EXPIRE yes
 }
-
-
-test {EXISTS - key exists before lazy expiry, removed after accessing all expired fields} {
-    r FLUSHALL
-    r debug SET-ACTIVE-EXPIRE no
-
-    # This test verifies that Redis considers a key to "exist" even if
-    # all its fields are expired but haven't yet been lazily deleted.
-    #
-    # Redis only removes the hash when lazy expiry is triggered (e.g. via HGET).
-    # Until then, EXISTS and HLEN report that the key still exists.
-    # Once a field is accessed and expired, and if all fields are expired,
-    # the hash is deleted automatically.
-
-    # Set multiple fields with short TTL
-    r HSETEX myhash PX 10 FIELDS 2 field1 val1 field2 val2
-    after 20
-
-    # The key and both fields should still appear present
-    assert_equal 1 [r EXISTS myhash]
-    assert_equal 2 [r HLEN myhash]
-
-    # Trigger lazy expiry on both fields
-    r HGET myhash field1
-    r HGET myhash field2
-
-    # All fields should now be gone; hash should be deleted
-    assert_equal 0 [r EXISTS myhash]
-    assert_equal 0 [r HLEN myhash]
-
-    r debug SET-ACTIVE-EXPIRE yes
-}
-
 
 ###### Test EXPIRE #############
 

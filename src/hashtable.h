@@ -45,8 +45,7 @@ typedef uint64_t hashtableIncrementalFindState[5];
 typedef enum {
     ELEMENT_NONE = 0,
     ELEMENT_VALID,
-    ELEMENT_INVALID,
-    ELEMENT_DELETE,
+    ELEMENT_INVALID
 } hashtableElementAccessState;
 
 /* --- Non-opaque types --- */

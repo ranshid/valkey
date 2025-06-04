@@ -45,12 +45,11 @@
 sds hashTypeEntryGetField(const hashTypeEntry *entry);
 static inline hashTypeEntry *hashTypeEntrySetExpiry(hashTypeEntry *entry, long long expiry);
 int hashTypeExpireEntry(hashTypeEntry *entry);
-int hashTypeExpireRemoveEntry(void *entry);
 
 volatileEntryType hashvolatileEntryType = {
     .entryGetKey = (sds(*)(const void *entry))hashTypeEntryGetField,
     .getExpiry = (long long (*)(const void *entry))hashTypeEntryGetExpiry,
-    .expire = hashTypeExpireRemoveEntry,
+    .expire = hashTypeExpireEntry,
 };
 
 
@@ -478,12 +477,6 @@ int hashTypeExpireEntry(void *entry) {
     }
     hashTypePropagateDeletion(server.access_context.db, key, entry);
     decrRefCount(keyobj);
-    return 1;
-}
-
-int hashTypeExpireRemoveEntry(void *entry) {
-    serverAssert(server.access_context.key && server.access_context.db);
-    hashTypeExpireEntry(entry);
     return hashTypeDelete(server.access_context.key, (sds)entry);
 }
 
@@ -495,55 +488,7 @@ hashtableElementAccessState hashHashtableTypeAccess(hashtable *ht, void *entry) 
 
     if ((server.access_context.flags & OBJ_ACCESS_IGNORE_TTL) || !hashTypeEntryIsExpired(entry)) return ELEMENT_VALID;
 
-    if (!delete_expired) return ELEMENT_INVALID;
-
-    if (server.access_context.flags == OBJ_ACCESS_NONE) return ELEMENT_INVALID;
-
-    /* From this point we will be deleting the entry */
-    server.access_context.expired++;
-    robj *o = server.access_context.val;
-    serverDb *db = server.access_context.db;
-
-    serverAssert(o && db);
-
-    hashTypeUntrackEntry(o, entry);
-    hashTypeExpireEntry(entry);
-    return ELEMENT_DELETE;
-}
-
-void hashTypeSetAccessContext(robj *key, robj *val, serverDb *db) {
-    setAccessContext(key, val, db);
-}
-
-void hashTypeResetAccessContext(void) {
-    robj *keyobj = server.access_context.key;
-    robj *o = server.access_context.val;
-    serverDb *db = server.access_context.db;
-    serverAssert(!o || o->type == OBJ_HASH);
-    uint64_t num_expired = server.access_context.expired;
-    resetAccessContext();
-    if (o) {
-        int is_empty = hashTypeLength(o) == 0;
-        if (is_empty || num_expired) {
-            /* We need to report key changes and notifications. for that we need to make sure we have the key object */
-            if (!keyobj) {
-                sds key = objectGetKey(o);
-                keyobj = createStringObject(key, sdslen(key));
-            } else {
-                incrRefCount(keyobj);
-            }
-            /* In case we have some entries which are expired we need to report it */
-            if (num_expired)
-                notifyKeyspaceEvent(NOTIFY_EXPIRED, "hexpired", keyobj, db->id);
-            /* In casethe object was left empty, we need to make sure to delete it (we do not support zero size hashes) */
-            if (is_empty) {
-                notifyKeyspaceEvent(NOTIFY_GENERIC, "del", keyobj, db->id);
-                dbDelete(db, keyobj);
-            }
-            signalModifiedKey(server.current_client, db, keyobj);
-            decrRefCount(keyobj);
-        }
-    }
+    return ELEMENT_INVALID;
 }
 
 /*-----------------------------------------------------------------------------
@@ -1254,12 +1199,10 @@ void hincrbyCommand(client *c) {
 
     if (getLongLongFromObjectOrReply(c, c->argv[3], &incr, NULL) != C_OK) return;
     if ((o = hashTypeLookupWriteOrCreate(c, c->argv[1])) == NULL) return;
-    hashTypeSetAccessContext(c->argv[1], o, c->db);
     if (hashTypeGetValue(o, c->argv[2]->ptr, &vstr, &vlen, &value) == C_OK) {
         if (vstr) {
             if (string2ll((char *)vstr, vlen, &value) == 0) {
                 addReplyError(c, "hash value is not an integer");
-                hashTypeResetAccessContext();
                 return;
             }
         } /* Else hashTypeGetValue() already stored it into &value */
@@ -1271,7 +1214,6 @@ void hincrbyCommand(client *c) {
     if ((incr < 0 && oldvalue < 0 && incr < (LLONG_MIN - oldvalue)) ||
         (incr > 0 && oldvalue > 0 && incr > (LLONG_MAX - oldvalue))) {
         addReplyError(c, "increment or decrement would overflow");
-        hashTypeResetAccessContext();
         return;
     }
     value += incr;
@@ -1281,7 +1223,6 @@ void hincrbyCommand(client *c) {
     notifyKeyspaceEvent(NOTIFY_HASH, "hincrby", c->argv[1], c->db->id);
     server.dirty++;
     addReplyLongLong(c, value);
-    hashTypeResetAccessContext();
 }
 
 void hincrbyfloatCommand(client *c) {
@@ -1299,13 +1240,10 @@ void hincrbyfloatCommand(client *c) {
     }
     if ((o = hashTypeLookupWriteOrCreate(c, c->argv[1])) == NULL) return;
 
-    hashTypeSetAccessContext(c->argv[1], o, c->db);
-
     if (hashTypeGetValue(o, c->argv[2]->ptr, &vstr, &vlen, &ll) == C_OK) {
         if (vstr) {
             if (string2ld((char *)vstr, vlen, &value) == 0) {
                 addReplyError(c, "hash value is not a float");
-                hashTypeResetAccessContext();
                 return;
             }
         } else {
@@ -1318,7 +1256,6 @@ void hincrbyfloatCommand(client *c) {
     value += incr;
     if (isnan(value) || isinf(value)) {
         addReplyError(c, "increment would produce NaN or Infinity");
-        hashTypeResetAccessContext();
         return;
     }
 
@@ -1339,7 +1276,6 @@ void hincrbyfloatCommand(client *c) {
     rewriteClientCommandArgument(c, 0, shared.hset);
     rewriteClientCommandArgument(c, 3, newobj);
     decrRefCount(newobj);
-    hashTypeResetAccessContext();
 }
 
 static void addHashFieldToReply(client *c, robj *o, sds field) {
@@ -1367,11 +1303,7 @@ void hgetCommand(client *c) {
     robj *o;
 
     if ((o = lookupKeyReadOrReply(c, c->argv[1], shared.null[c->resp])) == NULL || checkType(c, o, OBJ_HASH)) return;
-    hashTypeSetAccessContext(c->argv[1], o, c->db);
-
     addHashFieldToReply(c, o, c->argv[2]->ptr);
-
-    hashTypeResetAccessContext();
 }
 
 void hmgetCommand(client *c) {
@@ -1384,8 +1316,6 @@ void hmgetCommand(client *c) {
 
     if (checkType(c, o, OBJ_HASH)) return;
 
-    hashTypeSetAccessContext(c->argv[1], o, c->db);
-
     addReplyArrayLen(c, c->argc - 2);
     for (i = 2; i < c->argc; i++) {
         addHashFieldToReply(c, o, c->argv[i]->ptr);
@@ -1393,20 +1323,19 @@ void hmgetCommand(client *c) {
     if (o && hashTypeLength(o) == 0) {
         dbDelete(c->db, c->argv[1]);
     }
-
-    hashTypeResetAccessContext();
 }
 
 void hdelCommand(client *c) {
     robj *o;
-    int j, deleted = 0;
+    int j, deleted = 0, keyremoved = 0;
 
     if ((o = lookupKeyWriteOrReply(c, c->argv[1], shared.czero)) == NULL || checkType(c, o, OBJ_HASH)) return;
-    hashTypeSetAccessContext(c->argv[1], o, c->db);
     for (j = 2; j < c->argc; j++) {
         if (hashTypeDelete(o, c->argv[j]->ptr)) {
             deleted++;
             if (hashTypeLength(o) == 0) {
+                dbDelete(c->db, c->argv[1]);
+                keyremoved = 1;
                 break;
             }
         }
@@ -1414,9 +1343,9 @@ void hdelCommand(client *c) {
     if (deleted) {
         signalModifiedKey(c, c->db, c->argv[1]);
         notifyKeyspaceEvent(NOTIFY_HASH, "hdel", c->argv[1], c->db->id);
+        if (keyremoved) notifyKeyspaceEvent(NOTIFY_GENERIC, "del", c->argv[1], c->db->id);
         server.dirty += deleted;
     }
-    hashTypeResetAccessContext();
     addReplyLongLong(c, deleted);
 }
 
@@ -1432,9 +1361,7 @@ void hstrlenCommand(client *c) {
     robj *o;
 
     if ((o = lookupKeyReadOrReply(c, c->argv[1], shared.czero)) == NULL || checkType(c, o, OBJ_HASH)) return;
-    hashTypeSetAccessContext(c->argv[1], o, c->db);
     addReplyLongLong(c, hashTypeGetValueLength(o, c->argv[2]->ptr));
-    hashTypeResetAccessContext();
 }
 
 static void addHashIteratorCursorToReply(writePreparedClient *wpc, hashTypeIterator *hi, int what) {
@@ -1459,7 +1386,6 @@ static void addHashIteratorCursorToReply(writePreparedClient *wpc, hashTypeItera
 void hsetnxCommand(client *c) {
     robj *o;
     if ((o = hashTypeLookupWriteOrCreate(c, c->argv[1])) == NULL) return;
-    hashTypeSetAccessContext(c->argv[1], o, c->db);
     if (hashTypeExists(o, c->argv[2]->ptr)) {
         addReply(c, shared.czero);
     } else {
@@ -1470,7 +1396,6 @@ void hsetnxCommand(client *c) {
         server.dirty++;
         addReply(c, shared.cone);
     }
-    hashTypeResetAccessContext();
 }
 
 void hsetCommand(client *c) {
@@ -1485,7 +1410,6 @@ void hsetCommand(client *c) {
     if ((o = hashTypeLookupWriteOrCreate(c, c->argv[1])) == NULL) return;
     hashTypeTryConversion(o, c->argv, 2, c->argc - 1);
 
-    hashTypeSetAccessContext(c->argv[1], o, c->db);
     for (i = 2; i < c->argc; i += 2) created += !hashTypeSet(o, c->argv[i]->ptr, c->argv[i + 1]->ptr, EXPIRY_NONE, HASH_SET_COPY);
 
     signalModifiedKey(c, c->db, c->argv[1]);
@@ -1501,8 +1425,6 @@ void hsetCommand(client *c) {
         /* HMSET */
         addReply(c, shared.ok);
     }
-
-    hashTypeResetAccessContext();
 }
 
 void hsetexCommand(client *c) {
@@ -1570,8 +1492,6 @@ void hsetexCommand(client *c) {
         }
     }
 
-    hashTypeSetAccessContext(c->argv[1], o, c->db);
-
     for (i = fields_index; i < c->argc; i += 2) {
         if (set_expired) {
             changes += hashTypeDelete(o, c->argv[i]->ptr);
@@ -1602,8 +1522,6 @@ void hsetexCommand(client *c) {
     notifyKeyspaceEvent(NOTIFY_HASH, "hset", c->argv[1], c->db->id);
     server.dirty += changes;
     addReplyLongLong(c, changes == num_fields ? 1 : 0);
-
-    hashTypeResetAccessContext();
 }
 
 void hgetexCommand(client *c) {
@@ -1773,9 +1691,7 @@ void hgetallCommand(client *c) {
 void hexistsCommand(client *c) {
     robj *o;
     if ((o = lookupKeyReadOrReply(c, c->argv[1], shared.czero)) == NULL || checkType(c, o, OBJ_HASH)) return;
-    hashTypeSetAccessContext(c->argv[1], o, c->db);
     addReply(c, hashTypeExists(o, c->argv[2]->ptr) ? shared.cone : shared.czero);
-    hashTypeResetAccessContext();
 }
 
 void hscanCommand(client *c) {
@@ -1836,9 +1752,6 @@ void hexpireGenericCommand(client *c, long long basetime, int unit) {
     if (checkType(c, obj, OBJ_HASH)) {
         return;
     }
-
-    hashTypeSetAccessContext(key, obj, c->db);
-
     /* From this point we would return array reply */
     addReplyArrayLen(c, num_fields);
 
@@ -1875,7 +1788,6 @@ void hexpireGenericCommand(client *c, long long basetime, int unit) {
         notifyKeyspaceEvent(NOTIFY_HASH, "hexpire", c->argv[1], c->db->id);
         signalModifiedKey(c, c->db, obj);
     }
-    hashTypeResetAccessContext();
 }
 
 void hexpireCommand(client *c) {
@@ -1907,8 +1819,6 @@ void hpersistCommand(client *c) {
 
     robj *hash = lookupKeyWrite(c->db, c->argv[1]);
 
-    hashTypeSetAccessContext(c->argv[1], hash, c->db);
-
     for (; fields_index < num_fields; fields_index++) {
         result = hashTypePersist(hash, c->argv[fields_index]->ptr);
         server.dirty += (result > 0 ? 1 : 0); // in case there was a change increment the dirty
@@ -1919,7 +1829,6 @@ void hpersistCommand(client *c) {
         notifyKeyspaceEvent(NOTIFY_HASH, "hpersist", c->argv[1], c->db->id);
         signalModifiedKey(c, c->db, hash);
     }
-    hashTypeResetAccessContext();
 }
 
 void httlGenericCommand(client *c, long long basetime, int unit) {
@@ -1937,8 +1846,6 @@ void httlGenericCommand(client *c, long long basetime, int unit) {
     /* From this point we would return array reply */
     addReplyArrayLen(c, num_fields);
 
-    hashTypeSetAccessContext(c->argv[1], hash, c->db);
-
     for (int i = 0; i < num_fields; i++) {
         if (!hash || hashTypeGetExpiry(hash, c->argv[fields_index + i]->ptr, &result) == C_ERR) {
             addReplyLongLong(c, -2);
@@ -1950,8 +1857,6 @@ void httlGenericCommand(client *c, long long basetime, int unit) {
             addReplyLongLong(c, unit == UNIT_MILLISECONDS ? result : ((result + 500) / 1000));
         }
     }
-
-    hashTypeResetAccessContext();
 }
 
 void httlCommand(client *c) {
