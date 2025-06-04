@@ -43,8 +43,6 @@
 
 
 sds hashTypeEntryGetField(const hashTypeEntry *entry);
-static inline void *hashTypeEntryGetMetadata(const hashTypeEntry *entry);
-static inline size_t hashTypeEntryGetMetadataSize(const hashTypeEntry *entry);
 static inline hashTypeEntry *hashTypeEntrySetExpiry(hashTypeEntry *entry, long long expiry);
 int hashTypeExpireEntry(hashTypeEntry *entry);
 int hashTypeExpireRemoveEntry(void *entry);
@@ -101,19 +99,12 @@ volatileEntryType hashvolatileEntryType = {
 /* SDS aux flag. If set, it indicates that the entry has TTL metadata set. */
 #define FIELD_SDS_AUX_BIT_ENTRY_HAS_TTL 1
 
-/* SDS aux flag. If set, it indicates that the entry has TTL metadata set. */
-#define FIELD_SDS_AUX_BIT_ENTRY_HAS_METADATA 2
-
 static inline bool entryHasValuePtr(const hashTypeEntry *entry) {
     return sdsGetAuxBit(entry, FIELD_SDS_AUX_BIT_ENTRY_HAS_VALUE_PTR);
 }
 
 static inline bool entryHasExpiry(const hashTypeEntry *entry) {
     return sdsGetAuxBit(entry, FIELD_SDS_AUX_BIT_ENTRY_HAS_TTL);
-}
-
-static inline bool entryHasMetadata(const hashTypeEntry *entry) {
-    return sdsGetAuxBit(entry, FIELD_SDS_AUX_BIT_ENTRY_HAS_METADATA);
 }
 
 /* Returns the location of a pointer to a separately allocated value. Only for
@@ -126,29 +117,27 @@ static sds *hashTypeEntryGetValueRef(const hashTypeEntry *entry) {
 }
 
 /* takes ownership of value, does not take ownership of field */
-hashTypeEntry *hashTypeCreateEntry(sds field, sds value, long long expiry, void *metadata, size_t metadata_size) {
-    serverAssert(metadata_size <= UCHAR_MAX);
+hashTypeEntry *hashTypeCreateEntry(sds field, sds value, long long expiry) {
     sds embedded_field_sds;
     size_t expiry_size = (expiry == EXPIRY_NONE) ? 0 : sizeof(long long);
-    size_t metadata_header_size = metadata_size ? sizeof(char) : 0;
     size_t field_len = sdslen(field);
     int field_sds_type = sdsReqType(field_len);
-    if (field_sds_type == SDS_TYPE_5 && (expiry_size > 0 || metadata_size > 0)) {
+    if (field_sds_type == SDS_TYPE_5 && (expiry_size > 0)) {
         field_sds_type = SDS_TYPE_8;
     }
     size_t field_size = sdsReqSize(field_len, field_sds_type);
     size_t value_len = sdslen(value);
     size_t value_size = sdsReqSize(value_len, SDS_TYPE_8);
-    size_t alloc_size = field_size + metadata_size + metadata_header_size + expiry_size;
+    size_t alloc_size = field_size + expiry_size;
     bool embed_value = false;
     if (alloc_size + value_size <= EMBED_VALUE_MAX_ALLOC_SIZE) {
         /* Embed field and value. Value is fixed to SDS_TYPE_8. Unused
          * allocation space is recorded in the embedded value's SDS header.
          *
-         *     +----------+----------+------+--------------+---------------+
-         *     | metadata | metadata | TTL  | field        | value         |
-         *     |          |   size   |      | hdr "foo" \0 | hdr8 "bar" \0 |
-         *     +----------+----------+------+--------------+---------------+
+         *     +------+--------------+---------------+
+         *     | TTL  | field        | value         |
+         *     |      | hdr "foo" \0 | hdr8 "bar" \0 |
+         *     +------+--------------+---------------+
          */
         embed_value = true;
         alloc_size += value_size;
@@ -156,10 +145,10 @@ hashTypeEntry *hashTypeCreateEntry(sds field, sds value, long long expiry, void 
         /* Embed field, but not value. Field must be >= SDS_TYPE_8 to encode to
          * indicate this type of entry.
          *
-         *     +----------+----------+------+-------+---------------+
-         *     | metadata | metadata | TTL  | value | field         |
-         *     |          |   size   |      | ptr   | hdr8 "foo" \0 |
-         *     +----------+----------+------+-------+---------------+
+         *     +------+-------+---------------+
+         *     | TTL  | value | field         |
+         *     |      | ptr   | hdr8 "foo" \0 |
+         *     +------+-------+---------------+
          */
         embed_value = false;
         alloc_size += sizeof(sds *);
@@ -174,15 +163,6 @@ hashTypeEntry *hashTypeCreateEntry(sds field, sds value, long long expiry, void 
     /* allocate the buffer */
     size_t buf_size;
     char *buf = zmalloc_usable(alloc_size, &buf_size);
-
-    /* Copy the metadata if exists */
-    if (metadata_size) {
-        memcpy(buf, metadata, metadata_size);
-        buf += metadata_size;
-        *buf = (char)(metadata_size & 0xFF);
-        buf += sizeof(char);
-        buf_size -= sizeof(char);
-    }
 
     /* Set The expiry if exists */
     if (expiry_size) {
@@ -206,11 +186,8 @@ hashTypeEntry *hashTypeCreateEntry(sds field, sds value, long long expiry, void 
     /* Field sds aux bits are zero, which we use for this entry encoding. */
     sdsSetAuxBit(embedded_field_sds, FIELD_SDS_AUX_BIT_ENTRY_HAS_VALUE_PTR, embed_value ? 0 : 1);
     sdsSetAuxBit(embedded_field_sds, FIELD_SDS_AUX_BIT_ENTRY_HAS_TTL, expiry_size > 0 ? 1 : 0);
-    sdsSetAuxBit(embedded_field_sds, FIELD_SDS_AUX_BIT_ENTRY_HAS_METADATA, metadata_size > 0 ? 1 : 0);
     serverAssert(sdsGetAuxBit(embedded_field_sds, FIELD_SDS_AUX_BIT_ENTRY_HAS_VALUE_PTR) == (embed_value ? 0 : 1));
     serverAssert(sdsGetAuxBit(embedded_field_sds, FIELD_SDS_AUX_BIT_ENTRY_HAS_TTL) == (expiry != EXPIRY_NONE));
-    serverAssert(sdsGetAuxBit(embedded_field_sds, FIELD_SDS_AUX_BIT_ENTRY_HAS_METADATA) == (metadata_size > 0 ? 1 : 0));
-
     return (void *)embedded_field_sds;
 }
 
@@ -249,7 +226,6 @@ static void *hashTypeEntryAllocPtr(const hashTypeEntry *entry) {
     char *buf = sdsAllocPtr(entry);
     if (entryHasValuePtr(entry)) buf -= sizeof(sds *);
     if (entryHasExpiry(entry)) buf -= sizeof(long long);
-    if (entryHasMetadata(entry)) buf -= (hashTypeEntryGetMetadataSize(entry) + sizeof(char));
     return buf;
 }
 
@@ -267,8 +243,7 @@ static hashTypeEntry *hashTypeEntryUpdate(hashTypeEntry *entry, sds value, long 
     size_t value_len = sdslen(value);
     size_t value_size = sdsReqSize(value_len, SDS_TYPE_8);
     size_t expiry_size = ttl != EXPIRY_NONE ? sizeof(ttl) : 0;
-    size_t metadata_size = entryHasMetadata(entry) ? hashTypeEntryGetMetadataSize(entry) + sizeof(char) : 0;
-    size_t required_size = field_size + value_size + expiry_size + metadata_size;
+    size_t required_size = field_size + value_size + expiry_size;
     size_t current_allocation_size = hashTypeEntryMemUsage(entry);
     bool create_new_entry = (update_expiry && (hashTypeEntryGetExpiry(entry) == EXPIRY_NONE || ttl == EXPIRY_NONE)) ||
                             !(update_value && !entryHasValuePtr(entry) &&
@@ -288,7 +263,7 @@ static hashTypeEntry *hashTypeEntryUpdate(hashTypeEntry *entry, sds value, long 
         return entry;
 
     } else {
-        hashTypeEntry *new_entry = hashTypeCreateEntry(hashTypeEntryGetField(entry), value, ttl, hashTypeEntryGetMetadata(entry), metadata_size);
+        hashTypeEntry *new_entry = hashTypeCreateEntry(hashTypeEntryGetField(entry), value, ttl);
         freeHashTypeEntry(entry);
         return new_entry;
     }
@@ -306,30 +281,12 @@ size_t hashTypeEntryMemUsage(hashTypeEntry *entry) {
     } else {
         mem += sdsReqSize(sdslen(entry), sdsType(entry));
         if (entryHasExpiry(entry)) mem += sizeof(long long);
-        if (entryHasMetadata(entry)) mem += (hashTypeEntryGetMetadataSize(entry) + sizeof(char));
     }
     mem += sdsAllocSize(hashTypeEntryGetValue(entry));
     return mem;
 }
 
 /**************************************** Entry Expiry API *****************************************/
-static inline void *hashTypeEntryGetMetadata(const hashTypeEntry *entry) {
-    if (entryHasExpiry(entry))
-        return hashTypeEntryAllocPtr(entry);
-    return NULL;
-}
-
-static inline size_t hashTypeEntryGetMetadataSize(const hashTypeEntry *entry) {
-    size_t medadata_size = 0;
-    if (!entryHasMetadata(entry)) return medadata_size;
-
-    char *buf = sdsAllocPtr(entry);
-    if (entryHasValuePtr(entry)) buf -= sizeof(sds *);
-    if (entryHasExpiry(entry)) buf -= sizeof(long long);
-    buf -= sizeof(char);
-    return (size_t)(*buf);
-}
-
 long long hashTypeEntryGetExpiry(const hashTypeEntry *entry) {
     long long expiry = EXPIRY_NONE;
     if (entryHasExpiry(entry)) {
@@ -355,9 +312,7 @@ static inline hashTypeEntry *hashTypeEntrySetExpiry(hashTypeEntry *entry, long l
     }
     hashTypeEntry *new_entry = hashTypeCreateEntry(hashTypeEntryGetField(entry),
                                                    sdsdup(hashTypeEntryGetValue(entry)),
-                                                   expiry,
-                                                   hashTypeEntryGetMetadata(entry),
-                                                   hashTypeEntryGetMetadataSize(entry));
+                                                   expiry);
     freeHashTypeEntry(entry);
     return new_entry;
 }
@@ -823,7 +778,7 @@ int hashTypeSet(robj *o, sds field, sds value, long long expiry, int flags) {
         void *existing;
         if (hashtableFindPositionForInsert(ht, field, &position, &existing)) {
             /* does not exist yet */
-            hashTypeEntry *entry = hashTypeCreateEntry(field, v, expiry, NULL, 0);
+            hashTypeEntry *entry = hashTypeCreateEntry(field, v, expiry);
             hashtableInsertAtPosition(ht, entry, &position);
             /* In case an expiry is set on the new entry, we need to track it */
             if (expiry != EXPIRY_NONE) {
@@ -1173,7 +1128,7 @@ void hashTypeConvertListpack(robj *o, int enc) {
         while (hashTypeNext(&hi) != C_ERR) {
             sds field = hashTypeCurrentObjectNewSds(&hi, OBJ_HASH_FIELD);
             sds value = hashTypeCurrentObjectNewSds(&hi, OBJ_HASH_VALUE);
-            hashTypeEntry *entry = hashTypeCreateEntry(field, value, -1, NULL, 0);
+            hashTypeEntry *entry = hashTypeCreateEntry(field, value, EXPIRY_NONE);
             sdsfree(field);
             if (!hashtableAdd(ht, entry)) {
                 freeHashTypeEntry(entry);
@@ -1230,7 +1185,7 @@ robj *hashTypeDup(robj *o) {
             sds value = hashTypeCurrentFromHashTable(&hi, OBJ_HASH_VALUE);
 
             /* Add a field-value pair to a new hash object. */
-            hashTypeEntry *entry = hashTypeCreateEntry(field, sdsdup(value), -1, NULL, 0);
+            hashTypeEntry *entry = hashTypeCreateEntry(field, sdsdup(value), EXPIRY_NONE);
             hashtableAdd(ht, entry);
         }
         hashTypeResetIterator(&hi);

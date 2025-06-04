@@ -2141,7 +2141,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
                 (sdslen(field) > server.hash_max_listpack_value || sdslen(value) > server.hash_max_listpack_value ||
                  !lpSafeToAdd(o->ptr, sdslen(field) + sdslen(value)))) {
                 hashTypeConvert(o, OBJ_ENCODING_HASHTABLE);
-                hashTypeEntry *entry = hashTypeCreateEntry(field, value, -1, NULL, 0);
+                hashTypeEntry *entry = hashTypeCreateEntry(field, value, EXPIRY_NONE);
                 sdsfree(field);
                 if (!hashtableAdd((hashtable *)o->ptr, entry)) {
                     rdbReportCorruptRDB("Duplicate hash fields detected");
@@ -2200,7 +2200,7 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
             }
 
             /* Add pair to hash table */
-            hashTypeEntry *entry = hashTypeCreateEntry(field, value, itemexpiry, NULL, 0);
+            hashTypeEntry *entry = hashTypeCreateEntry(field, value, itemexpiry);
             sdsfree(field);
             if (!hashtableAdd((hashtable *)o->ptr, entry)) {
                 rdbReportCorruptRDB("Duplicate hash fields detected");

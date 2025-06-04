@@ -3334,7 +3334,7 @@ robj *setTypeDup(robj *o);
 #define HASH_SET_COPY 0
 
 typedef void hashTypeEntry;
-hashTypeEntry *hashTypeCreateEntry(sds field, sds value, long long ttl, void *metadata, size_t metadata_size);
+hashTypeEntry *hashTypeCreateEntry(sds field, sds value, long long ttl);
 sds hashTypeEntryGetField(const hashTypeEntry *entry);
 sds hashTypeEntryGetValue(const hashTypeEntry *entry);
 long long hashTypeEntryGetExpiry(const hashTypeEntry *entry);
