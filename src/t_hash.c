@@ -1448,6 +1448,11 @@ void hsetexCommand(client *c) {
             break;
         }
     }
+    /* In case missing fields argument or bad number of fields provided, bail with syntax error */
+    if (num_fields <= 0) {
+        addReplyErrorObject(c, shared.syntaxerr);
+        return;
+    }
 
     if (num_fields > (c->argc - fields_index) / 2) num_fields = (c->argc - fields_index) / 2; // Potential user error, but we would like to make effort to comply with the request.
 
@@ -1531,7 +1536,7 @@ void hgetexCommand(client *c) {
     int unit = UNIT_SECONDS;
     int flags = OBJ_NO_FLAGS;
     int fields_index = 0;
-    long long num_fields = 0;
+    long long num_fields = -1;
     long long when = EXPIRY_NONE;
     int i = 0;
     int set_expiry = 0, set_expired = 0, persist = 0;
@@ -1548,6 +1553,12 @@ void hgetexCommand(client *c) {
             if (getLongLongFromObjectOrReply(c, c->argv[fields_index++], &num_fields, NULL) != C_OK) return;
             break;
         }
+    }
+
+    /* In case missing fields argument or bad number of fields provided, bail with syntax error */
+    if (num_fields <= 0) {
+        addReplyErrorObject(c, shared.syntaxerr);
+        return;
     }
 
     if (num_fields > c->argc - fields_index) num_fields = c->argc - fields_index; // Potential user error, but we would like to make effort to comply with the request.
@@ -1736,6 +1747,12 @@ void hexpireGenericCommand(client *c, long long basetime, int unit) {
             if (getLongLongFromObjectOrReply(c, c->argv[fields_index++], &num_fields, NULL) != C_OK) return;
             break;
         }
+    }
+
+    /* In case missing fields argument or bad number of fields provided, bail with syntax error */
+    if (num_fields <= 0) {
+        addReplyErrorObject(c, shared.syntaxerr);
+        return;
     }
 
     if (num_fields > c->argc - fields_index) num_fields = c->argc - fields_index; // Potential user error, but we would like to make effort to comply with the request.
