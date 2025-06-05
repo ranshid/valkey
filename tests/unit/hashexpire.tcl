@@ -8,7 +8,7 @@ foreach line [split $info "\n"] {
 return ""
 }
 
-start_server {tags {"hashexpire"}} {    
+start_server {tags {"hashexpire external:skip"}} {    
 
     test {HSETEX KEEPTTL - preserves existing TTL of field} {
         r FLUSHALL
@@ -907,8 +907,7 @@ test {HDEL - lazily expired field is removed without triggering expiry logic} {
 }
 
 ####### Test info
-# HGETEX doesn't work
-start_server {tags {"hash-ttl-info"}} {    
+start_server {tags {"hash-ttl-info external:skip"}} {    
     test {Hash ttl - check command stats} {
         r FLUSHALL
 
@@ -955,7 +954,7 @@ start_server {tags {"hash-ttl-info"}} {
 
 #### Replication
 
-start_server {tags {"hashexpire"}} {
+start_server {tags {"hashexpire external:skip"}} {
     # Start another server to test replication of TTLs
     start_server {tags {needs:repl external:skip}} {
         # Set the outer layer server as primary
