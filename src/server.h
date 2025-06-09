@@ -857,6 +857,7 @@ typedef struct replBufBlock {
 typedef struct serverDb {
     kvstore *keys;                        /* The keyspace for this DB */
     kvstore *expires;                     /* Timeout of keys with a timeout set */
+    kvstore *object_with_volatile_elements;
     dict *blocking_keys;                  /* Keys with clients waiting for data (BLPOP)*/
     dict *blocking_keys_unblock_on_nokey; /* Keys with clients waiting for
                                            * data, and should be unblocked if key is deleted (XREADEDGROUP).
@@ -1603,15 +1604,6 @@ typedef enum childInfoType {
 #define OBJ_ACCESS_NORMAL (1 << 0)     /* Deleting lazy expired fields. */
 #define OBJ_ACCESS_IGNORE_TTL (1 << 1) /* treat any accessed field as valid regardless of it's TTL */
 
-typedef struct keyAccessContext {
-    int flags;
-    robj *key;
-    robj *val;
-    serverDb *db;
-    uint64_t expired;
-} keyAccessContext;
-
-
 /* Return values for expireIfNeeded */
 typedef enum {
     KEY_VALID = 0, /* Could be volatile and not yet expired, non-volatile, or even non-existing key. */
@@ -1693,7 +1685,6 @@ struct valkeyServer {
                                             * Value: RDB client object
                                             * This structure holds dual-channel sync replicas from the start of their
                                             * RDB transfer until their main channel establishes partial synchronization. */
-    keyAccessContext access_context;       /* The current key access context */
     client *current_client;                /* The client that triggered the command execution (External or AOF). */
     client *executing_client;              /* The client executing the current command (possibly script or module). */
 
@@ -3290,9 +3281,6 @@ void *activeDefragAlloc(void *ptr);
 robj *activeDefragStringOb(robj *ob);
 void dismissSds(sds s);
 void dismissMemoryInChild(void);
-void setAccessContext(robj *key, robj *val, serverDb *db);
-void setAccessContextWithFlags(robj *key, robj *val, serverDb *db, int flags);
-void resetAccessContext(void);
 
 #define RESTART_SERVER_NONE 0
 #define RESTART_SERVER_GRACEFULLY (1 << 0)     /* Do proper shutdown. */

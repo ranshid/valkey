@@ -319,7 +319,6 @@ static inline hashTypeEntry *hashTypeEntrySetExpiry(hashTypeEntry *entry, long l
 static int hashTypeEntryIsExpired(hashTypeEntry *entry) {
     /* Don't expire anything while loading. It will be done later. */
     if (server.loading) return 0;
-    if (server.lazy_expire_disabled) return 0;
     if (!timestampIsExpired(hashTypeEntryGetExpiry(entry))) return 0;
     if (server.primary_host == NULL && server.import_mode) {
         if (server.current_client && server.current_client->flag.import_source) return 0;
@@ -397,16 +396,25 @@ static volatile_set *
 hashTypeGetOrcreateVolatileSet(robj *o) {
     serverAssert(o->encoding == OBJ_ENCODING_HASHTABLE);
     volatile_set **volatile_set_ref = hashtableMetadata(o->ptr);
-    if (*volatile_set_ref == NULL)
+    if (*volatile_set_ref == NULL) {
         *volatile_set_ref = createVolatileSet(&hashvolatileEntryType);
+        /* serves mainly for optimization. Use type which supports access function only when needed. */
+        hashtableSetType(o->ptr, &hashWithVolatileItemsHashtableType);
+    }
     return *volatile_set_ref;
+}
+
+static void hashTypeDeleteVolatileSet(robj *o) {
+    volatile_set **volatile_set_ref = hashtableMetadata(o->ptr);
+    freeVolatileSet(*volatile_set_ref);
+    *volatile_set_ref = NULL;
+    /* serves mainly for optimization. by changing the hashtable type we can avoid extra function call in hashtable access */
+    hashtableSetType(o->ptr, &hashHashtableType);
 }
 
 void hashTypeTrackEntry(robj *o, void *entry) {
     volatile_set *set = hashTypeGetOrcreateVolatileSet(o);
     serverAssert(volatileSetAddEntry(set, entry, hashTypeEntryGetExpiry(entry)));
-    /* serves mainly for optimization. Use type which supports access function only when needed. */
-    hashtableSetType(o->ptr, &hashWithVolatileItemsHashtableType);
 }
 
 void hashTypeUntrackEntry(robj *o, void *entry) {
@@ -415,11 +423,7 @@ void hashTypeUntrackEntry(robj *o, void *entry) {
     debugServerAssert(set);
     serverAssert(volatileSetRemoveEntry(set, entry, hashTypeEntryGetExpiry(entry)));
     if (volatileSetNumEntries(set) == 0) {
-        freeVolatileSet(set);
-        volatile_set **volatile_set_ref = hashtableMetadata(o->ptr);
-        *volatile_set_ref = NULL;
-        /* serves mainly for optimization. by changing the hashtable type we can avoid extra function call in hashtable access */
-        hashtableSetType(o->ptr, &hashHashtableType);
+        hashTypeDeleteVolatileSet(o);
     }
 }
 
@@ -443,54 +447,22 @@ static void hashTypeTrackUpdateEntry(robj *o, void *old_entry, void *new_entry, 
         serverAssert(volatileSetUpdateEntry(set, old_entry, new_entry, old_expiry, new_expiry) == 1);
     }
     if (volatileSetNumEntries(set) == 0) {
-        freeVolatileSet(set);
-        volatile_set **volatile_set_ref = hashtableMetadata(o->ptr);
-        *volatile_set_ref = NULL;
+        hashTypeDeleteVolatileSet(o);
     }
-}
-
-void hashTypePropagateDeletion(serverDb *db, sds key, void *entry) {
-    robj *argv[3];
-    sds field = (sds)entry;
-    argv[0] = shared.hdel;
-    argv[1] = createStringObject(key, sdslen(key));
-    argv[2] = createStringObject(field, sdslen(field));
-    incrRefCount(argv[0]);
-
-    /* If the primary decided to delete a key we must propagate it to replicas no matter what.
-     * Even if module executed a command without asking for propagation. */
-    int prev_replication_allowed = server.replication_allowed;
-    server.replication_allowed = 1;
-    alsoPropagate(db->id, argv, 3, PROPAGATE_AOF | PROPAGATE_REPL);
-    server.replication_allowed = prev_replication_allowed;
-
-    decrRefCount(argv[0]);
-    decrRefCount(argv[1]);
-    decrRefCount(argv[2]);
 }
 
 int hashTypeExpireEntry(void *entry) {
-    serverAssert(server.access_context.val && server.access_context.db);
-    robj *keyobj = server.access_context.key;
-    robj *o = server.access_context.val;
-    sds key = objectGetKey(o);
-    if (!keyobj) {
-        keyobj = createStringObject(key, sdslen(key));
-    } else {
-        incrRefCount(keyobj);
-    }
-    hashTypePropagateDeletion(server.access_context.db, key, entry);
-    decrRefCount(keyobj);
-    return hashTypeDelete(server.access_context.key, (sds)entry);
+    // TBD
+    UNUSED(entry);
+    return 1;
 }
 
 hashtableElementAccessState hashHashtableTypeAccess(hashtable *ht, void *entry) {
     UNUSED(ht);
 
-    int delete_expired = 0;
-    if (!canExpireWithFlags(0, &delete_expired)) return ELEMENT_VALID;
+    if (!canExpireWithFlags(0, NULL)) return ELEMENT_VALID;
 
-    if ((server.access_context.flags & OBJ_ACCESS_IGNORE_TTL) || !hashTypeEntryIsExpired(entry)) return ELEMENT_VALID;
+    if (!hashTypeEntryIsExpired(entry)) return ELEMENT_VALID;
 
     return ELEMENT_INVALID;
 }

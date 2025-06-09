@@ -105,6 +105,7 @@ typedef void (*hashtableScanFunction)(void *privdata, void *entry);
 /* Iterator flags */
 #define HASHTABLE_ITER_SAFE (1 << 0)
 #define HASHTABLE_ITER_PREFETCH_VALUES (1 << 1)
+#define HASHTABLE_ITER_AVOID_ACCESS (1 << 2)
 
 /* --- Prototypes --- */
 

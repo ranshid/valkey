@@ -2040,7 +2040,7 @@ int hashtableNext(hashtableIterator *iterator, void **elemptr) {
             /* No entry here. */
             continue;
         }
-        if (accessElementIfNeeded(iter->hashtable, b->entries[iter->pos_in_bucket]) != ELEMENT_VALID) {
+        if (!(iter->flags & HASHTABLE_ITER_AVOID_ACCESS) && accessElementIfNeeded(iter->hashtable, b->entries[iter->pos_in_bucket]) != ELEMENT_VALID) {
             continue;
         }
         /* Return the entry at this position. */

@@ -685,7 +685,6 @@ hashtableType hashHashtableType = {
     .keyCompare = hashtableSdsKeyCompare,
     .entryDestructor = hashHashtableTypeDestructor,
     .getMetadataSize = hashHashtableTypeMetadataSize,
-    .accessElement = hashHashtableTypeAccess,
 };
 
 hashtableType hashWithVolatileItemsHashtableType = {
@@ -7223,26 +7222,6 @@ __attribute__((weak)) int main(int argc, char **argv) {
     aeMain(server.el);
     aeDeleteEventLoop(server.el);
     return 0;
-}
-
-void setAccessContext(robj *key, robj *val, serverDb *db) {
-    setAccessContextWithFlags(key, val, db, OBJ_ACCESS_NORMAL);
-}
-
-void setAccessContextWithFlags(robj *key, robj *val, serverDb *db, int flags) {
-    server.access_context.key = key;
-    server.access_context.val = val;
-    server.access_context.db = db;
-    server.access_context.flags = flags;
-    server.access_context.expired = 0;
-}
-
-void resetAccessContext(void) {
-    server.access_context.key = NULL;
-    server.access_context.val = NULL;
-    server.access_context.db = NULL;
-    server.access_context.flags = OBJ_ACCESS_NONE;
-    server.access_context.expired = 0;
 }
 
 /* The End */
