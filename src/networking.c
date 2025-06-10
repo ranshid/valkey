@@ -3713,7 +3713,7 @@ static bool readToQueryBuf(client *c) {
      * that is large enough, try to maximize the probability that the query
      * buffer contains exactly the SDS string representing the object, even
      * at the risk of requiring more read(2) calls. This way the function
-     * processMultiBulkBuffer() can avoid copying buffers to create the
+     * processMultibulkBuffer() can avoid copying buffers to create the
      * robj representing the argument. */
 
     if (c->reqtype == PROTO_REQ_MULTIBULK && c->multibulklen && c->bulklen != -1 && c->bulklen >= PROTO_MBULK_BIG_ARG) {
@@ -4749,11 +4749,12 @@ void clientUnblockCommand(client *c) {
     }
     if (getLongLongFromObjectOrReply(c, c->argv[2], &id, NULL) != C_OK) return;
     struct client *target = lookupClientByID(id);
-    /* Note that we never try to unblock a client blocked on a module command, which
+    /* Note that we never try to unblock a client blocked on a module command,
+     * or a client blocked by CLIENT PAUSE or some other blocking type which
      * doesn't have a timeout callback (even in the case of UNBLOCK ERROR).
      * The reason is that we assume that if a command doesn't expect to be timedout,
      * it also doesn't expect to be unblocked by CLIENT UNBLOCK */
-    if (target && target->flag.blocked && moduleBlockedClientMayTimeout(target)) {
+    if (target && target->flag.blocked && blockedClientMayTimeout(target)) {
         if (unblock_error)
             unblockClientOnError(target, "-UNBLOCKED client unblocked via CLIENT UNBLOCK");
         else

@@ -1024,6 +1024,7 @@ void clusterUpdateMyselfFlags(void) {
 void clusterUpdateMyselfAnnouncedPorts(void) {
     if (!myself) return;
     deriveAnnouncedPorts(&myself->tcp_port, &myself->tls_port, &myself->cport);
+    clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
 }
 
 /* We want to take myself->ip in sync with the cluster-announce-ip option.
@@ -1054,6 +1055,7 @@ void clusterUpdateMyselfIp(void) {
         } else {
             myself->ip[0] = '\0'; /* Force autodetection. */
         }
+        clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
     }
 }
 
@@ -3738,9 +3740,10 @@ int clusterProcessPacket(clusterLink *link) {
                     if (server.cluster->slots[j] == sender || isSlotUnclaimed(j)) continue;
                     if (server.cluster->slots[j]->configEpoch > sender_claimed_config_epoch) {
                         serverLog(LL_VERBOSE,
-                                  "Node %.40s has old slots configuration, sending "
-                                  "an UPDATE message about %.40s",
-                                  sender->name, server.cluster->slots[j]->name);
+                                  "Node %.40s (%s) has old slots configuration, sending "
+                                  "an UPDATE message about %.40s (%s)",
+                                  sender->name, sender->human_nodename,
+                                  server.cluster->slots[j]->name, server.cluster->slots[j]->human_nodename);
                         clusterSendUpdate(sender->link, server.cluster->slots[j]);
 
                         /* TODO: instead of exiting the loop send every other
@@ -4686,6 +4689,16 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
                   "slot %d epoch (%llu) > reqConfigEpoch (%llu)",
                   node->name, node->human_nodename, j, (unsigned long long)server.cluster->slots[j]->configEpoch,
                   (unsigned long long)requestConfigEpoch);
+
+        /* Send an UPDATE message to the replica. After receiving the UPDATE message,
+         * the replica will update the slots config so that it can initiate a failover
+         * again later. Otherwise the replica will never get votes if the primary is down. */
+        serverLog(LL_VERBOSE,
+                  "Node %.40s (%s) has old slots configuration, sending "
+                  "an UPDATE message about %.40s (%s)",
+                  node->name, node->human_nodename,
+                  server.cluster->slots[j]->name, server.cluster->slots[j]->human_nodename);
+        clusterSendUpdate(node->link, server.cluster->slots[j]);
         return;
     }
 
@@ -6552,29 +6565,30 @@ unsigned int delKeysInSlot(unsigned int hashslot, int lazy, bool propagate_del, 
     for (int i = 0; i < server.dbnum; i++) {
         kvstoreHashtableIterator *kvs_di = NULL;
         void *next;
-        serverDb db = server.db[i];
-        kvs_di = kvstoreGetHashtableIterator(db.keys, hashslot, HASHTABLE_ITER_SAFE);
+        serverDb *db = server.db[i];
+        if (db == NULL) continue;
+        kvs_di = kvstoreGetHashtableIterator(db->keys, hashslot, HASHTABLE_ITER_SAFE);
         while (kvstoreHashtableIteratorNext(kvs_di, &next)) {
             robj *valkey = next;
             enterExecutionUnit(1, 0);
             sds sdskey = objectGetKey(valkey);
             robj *key = createStringObject(sdskey, sdslen(sdskey));
             if (lazy) {
-                dbAsyncDelete(&db, key);
+                dbAsyncDelete(db, key);
             } else {
-                dbSyncDelete(&db, key);
+                dbSyncDelete(db, key);
             }
             // if is command, skip del propagate
-            if (propagate_del) propagateDeletion(&db, key, lazy);
-            signalModifiedKey(NULL, &db, key);
+            if (propagate_del) propagateDeletion(db, key, lazy);
+            signalModifiedKey(NULL, db, key);
             if (send_del_event) {
                 /* In the `cluster flushslot` scenario, the keys are actually deleted so notify everyone. */
-                notifyKeyspaceEvent(NOTIFY_GENERIC, "del", key, db.id);
+                notifyKeyspaceEvent(NOTIFY_GENERIC, "del", key, db->id);
             } else {
                 /* The keys are not actually logically deleted from the database, just moved to another node.
                  * The modules needs to know that these keys are no longer available locally, so just send the
                  * keyspace notification to the modules, but not to clients. */
-                moduleNotifyKeyspaceEvent(NOTIFY_GENERIC, "del", key, db.id);
+                moduleNotifyKeyspaceEvent(NOTIFY_GENERIC, "del", key, db->id);
             }
             exitExecutionUnit();
             postExecutionUnitOperations();
@@ -7052,7 +7066,7 @@ int clusterCommandSpecial(client *c) {
         }
     } else if (!strcasecmp(c->argv[1]->ptr, "flushslots") && c->argc == 2) {
         /* CLUSTER FLUSHSLOTS */
-        if (!dbHasNoKeys()) {
+        if (!dbsHaveNoKeys()) {
             addReplyError(c, "DB must be empty to perform CLUSTER FLUSHSLOTS.");
             return 1;
         }
@@ -7222,7 +7236,7 @@ int clusterCommandSpecial(client *c) {
         /* If the instance is currently a primary, it should have no assigned
          * slots nor keys to accept to replicate some other node.
          * Replicas can switch to another primary without issues. */
-        if (clusterNodeIsPrimary(myself) && (myself->numslots != 0 || !dbHasNoKeys())) {
+        if (clusterNodeIsPrimary(myself) && (myself->numslots != 0 || !dbsHaveNoKeys())) {
             addReplyError(c, "To set a master the node must be empty and "
                              "without assigned slots.");
             return 1;
@@ -7374,7 +7388,7 @@ int clusterCommandSpecial(client *c) {
 
         /* Replicas can be reset while containing data, but not primary nodes
          * that must be empty. */
-        if (clusterNodeIsPrimary(myself) && !dbHasNoKeys()) {
+        if (clusterNodeIsPrimary(myself) && !dbsHaveNoKeys()) {
             addReplyError(c, "CLUSTER RESET can't be called with "
                              "master nodes containing keys");
             return 1;

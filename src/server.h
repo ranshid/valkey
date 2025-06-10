@@ -891,7 +891,7 @@ typedef struct functionsLibCtx functionsLibCtx;
  * For example: dbarray need to be set as main database on
  *              successful loading and dropped on failure. */
 typedef struct rdbLoadingCtx {
-    serverDb *dbarray;
+    serverDb **dbarray;
     functionsLibCtx *functions_lib_ctx;
 } rdbLoadingCtx;
 
@@ -1373,6 +1373,8 @@ struct sharedObjectsStruct {
     robj *ok, *err, *emptybulk, *czero, *cone, *pong, *space, *queued, *null[4], *nullarray[4], *emptymap[4],
         *emptyset[4], *emptyarray, *wrongtypeerr, *nokeyerr, *syntaxerr, *sameobjecterr, *outofrangeerr, *noscripterr,
         *loadingerr, *slowevalerr, *slowscripterr, *slowmoduleerr, *bgsaveerr, *primarydownerr, *roreplicaerr,
+        *loadingerr_variants[2], *slowevalerr_variants[2], *slowscripterr_variants[2], *slowmoduleerr_variants[2],
+        *bgsaveerr_variants[2],
         *execaborterr, *noautherr, *noreplicaserr, *busykeyerr, *oomerr, *plus, *messagebulk, *pmessagebulk,
         *subscribebulk, *unsubscribebulk, *psubscribebulk, *punsubscribebulk, *del, *unlink, *rpop, *lpop, *lpush,
         *rpoplpush, *lmove, *blmove, *zpopmin, *zpopmax, *emptyscan, *multi, *exec, *left, *right, *hset, *hdel, *hpexpireat, *hpersist, *srem,
@@ -1645,7 +1647,7 @@ struct valkeyServer {
     int hz;                   /* serverCron() calls frequency in hertz */
     int clients_hz;           /* clientsTimeProc() frequency in hertz */
     int in_fork_child;        /* indication that this is a fork child */
-    serverDb *db;
+    serverDb **db;            /* each db created when it's first used */
     hashtable *commands;      /* Command table */
     hashtable *orig_commands; /* Command table before command renaming. */
     aeEventLoop *el;
@@ -3467,7 +3469,7 @@ void initConfigValues(void);
 void removeConfig(sds name);
 sds getConfigDebugInfo(void);
 int allowProtectedAction(int config, client *c);
-void createSharedObjectsWithCompat(void);
+void updateSharedObjectsWithCompat(void);
 void initServerClientMemUsageBuckets(void);
 void freeServerClientMemUsageBuckets(void);
 
@@ -3549,11 +3551,11 @@ robj *dbUnshareStringValue(serverDb *db, robj *key, robj *o);
 #define EMPTYDB_ASYNC (1 << 0)       /* Reclaim memory in another thread. */
 #define EMPTYDB_NOFUNCTIONS (1 << 1) /* Indicate not to flush the functions. */
 long long emptyData(int dbnum, int flags, void(callback)(hashtable *));
-long long emptyDbStructure(serverDb *dbarray, int dbnum, int async, void(callback)(hashtable *));
+long long emptyDbStructure(serverDb **dbarray, int dbnum, int async, void(callback)(hashtable *));
 void flushAllDataAndResetRDB(int flags);
 long long dbTotalServerKeyCount(void);
-serverDb *initTempDb(void);
-void discardTempDb(serverDb *tempDb);
+serverDb *initTempDb(int id);
+void discardTempDb(serverDb **tempDb);
 int selectDb(client *c, int id);
 void signalModifiedKey(client *c, serverDb *db, robj *key);
 void signalFlushedDb(int dbid, int async);
@@ -3599,7 +3601,6 @@ int zmpopGetKeys(struct serverCommand *cmd, robj **argv, int argc, getKeysResult
 int bzmpopGetKeys(struct serverCommand *cmd, robj **argv, int argc, getKeysResult *result);
 int setGetKeys(struct serverCommand *cmd, robj **argv, int argc, getKeysResult *result);
 int bitfieldGetKeys(struct serverCommand *cmd, robj **argv, int argc, getKeysResult *result);
-bool dbHasNoKeys(void);
 
 unsigned short crc16(const char *buf, int len);
 
@@ -3648,6 +3649,7 @@ void unblockClient(client *c, int queue_for_reprocessing);
 void unblockClientOnTimeout(client *c);
 void unblockClientOnError(client *c, const char *err_str);
 void queueClientForReprocessing(client *c);
+int blockedClientMayTimeout(client *c);
 void replyToBlockedClientTimedOut(client *c);
 int getTimeoutFromObjectOrReply(client *c, robj *object, mstime_t *timeout, int unit);
 void disconnectAllBlockedClients(void);
@@ -4038,7 +4040,11 @@ void commandAddSubcommand(struct serverCommand *parent, struct serverCommand *su
 void debugDelay(int usec);
 void killThreads(void);
 void makeThreadKillable(void);
-void swapMainDbWithTempDb(serverDb *tempDb);
+serverDb *createDatabase(int id);
+int dbHasNoKeys(int dbid);
+bool dbsHaveNoKeys(void);
+serverDb *createDatabaseIfNeeded(int id);
+void swapMainDbWithTempDb(serverDb **tempDb);
 sds getVersion(void);
 void debugPauseProcess(void);
 
