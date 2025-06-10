@@ -266,7 +266,8 @@ static hashTypeEntry *hashTypeEntryUpdate(hashTypeEntry *entry, sds value, long 
         if (!update_value) {
             int value_was_embedded = !entryHasValuePtr(entry);
             /* In case the original entry value is embedded and we know the destination entry will be able to embed the value
-             * We should duplicate the value. */
+             * We should duplicate the value.
+             * TODO: We could basically optimize this case better by signaling hashTypeCreateEntry to take the value and avoid freeing it. */
             if (value_was_embedded && required_size <= EMBED_VALUE_MAX_ALLOC_SIZE)
                 value = sdsdup(value);
             /* if not we have to duplicate it, remove it from the original entry since we are going to delete it.*/
