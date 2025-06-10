@@ -1535,8 +1535,6 @@ void hgetexCommand(client *c) {
         return;
     }
 
-    if (num_fields > c->argc - fields_index) num_fields = c->argc - fields_index; // Potential user error, but we would like to make effort to comply with the request.
-
     o = lookupKeyRead(c->db, c->argv[1]);
     if (checkType(c, o, OBJ_HASH))
         return;
@@ -1729,8 +1727,6 @@ void hexpireGenericCommand(client *c, long long basetime, int unit) {
         return;
     }
 
-    if (num_fields > c->argc - fields_index) num_fields = c->argc - fields_index; // Potential user error, but we would like to make effort to comply with the request.
-
     if (convertExpireArgumentToUnixTime(c, param, basetime, unit, &when) == C_ERR)
         return;
 
@@ -1803,7 +1799,11 @@ void hpersistCommand(client *c) {
 
     if (getLongLongFromObjectOrReply(c, c->argv[fields_index - 1], &num_fields, NULL) != C_OK) return;
 
-    if (num_fields > c->argc - fields_index) num_fields = c->argc - fields_index; // Potential user error, but we would like to make effort to comply with the request.
+    /* Check that the parsed fields number matches the real provided number of fields */
+    if (num_fields != (c->argc - fields_index)) {
+        addReplyErrorObject(c, shared.syntaxerr);
+        return;
+    }
 
     /* From this point we would return array reply */
     addReplyArrayLen(c, num_fields);
@@ -1828,7 +1828,11 @@ void httlGenericCommand(client *c, long long basetime, int unit) {
 
     if (getLongLongFromObjectOrReply(c, c->argv[fields_index - 1], &num_fields, NULL) != C_OK) return;
 
-    if (num_fields > c->argc - fields_index) num_fields = c->argc - fields_index; // Potential user error, but we would like to make effort to comply with the request.
+    /* Check that the parsed fields number matches the real provided number of fields */
+    if (num_fields != (c->argc - fields_index)) {
+        addReplyErrorObject(c, shared.syntaxerr);
+        return;
+    }
 
     robj *hash = lookupKeyRead(c->db, c->argv[1]);
 
