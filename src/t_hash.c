@@ -1425,7 +1425,7 @@ void hsetexCommand(client *c) {
         }
     }
     /* Check that the parsed fields number matches the real provided number of fields */
-    if (num_fields != (c->argc - fields_index) / 2) {
+    if (!num_fields || num_fields != (c->argc - fields_index) / 2) {
         addReplyErrorObject(c, shared.syntaxerr);
         return;
     }
@@ -1530,7 +1530,7 @@ void hgetexCommand(client *c) {
     }
 
     /* Check that the parsed fields number matches the real provided number of fields */
-    if (num_fields != (c->argc - fields_index)) {
+    if (!num_fields || num_fields != (c->argc - fields_index)) {
         addReplyErrorObject(c, shared.syntaxerr);
         return;
     }
@@ -1722,7 +1722,7 @@ void hexpireGenericCommand(client *c, long long basetime, int unit) {
     }
 
     /* Check that the parsed fields number matches the real provided number of fields */
-    if (num_fields != (c->argc - fields_index)) {
+    if (!num_fields || num_fields != (c->argc - fields_index)) {
         addReplyErrorObject(c, shared.syntaxerr);
         return;
     }
@@ -1800,7 +1800,7 @@ void hpersistCommand(client *c) {
     if (getLongLongFromObjectOrReply(c, c->argv[fields_index - 1], &num_fields, NULL) != C_OK) return;
 
     /* Check that the parsed fields number matches the real provided number of fields */
-    if (num_fields != (c->argc - fields_index)) {
+    if (!num_fields || num_fields != (c->argc - fields_index)) {
         addReplyErrorObject(c, shared.syntaxerr);
         return;
     }
@@ -1829,7 +1829,7 @@ void httlGenericCommand(client *c, long long basetime, int unit) {
     if (getLongLongFromObjectOrReply(c, c->argv[fields_index - 1], &num_fields, NULL) != C_OK) return;
 
     /* Check that the parsed fields number matches the real provided number of fields */
-    if (num_fields != (c->argc - fields_index)) {
+    if (!num_fields || num_fields != (c->argc - fields_index)) {
         addReplyErrorObject(c, shared.syntaxerr);
         return;
     }

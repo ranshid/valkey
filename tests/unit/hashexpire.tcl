@@ -36,12 +36,11 @@ start_server {tags {"hashexpire external:skip"}} {
         assert_equal newval [r HGET myhash field1]
     }
 
-# fields mismatch
-    # test {HSETEX EX - FIELDS 0 returns error} {
-    #     r FLUSHALL    
-    #     catch {r HSETEX myhash EX 10 FIELDS 0} e
-    #     set e
-    # } {ERR wrong number of arguments for 'hsetex' command}
+    test {HSETEX EX - FIELDS 0 returns error} {
+        r FLUSHALL    
+        catch {r HSETEX myhash EX 10 FIELDS 0} e
+        set e
+    } {ERR *}
 
     test {HSETEX EX - test negative ttl} {
         set ttl -10
@@ -49,11 +48,11 @@ start_server {tags {"hashexpire external:skip"}} {
         set e
     } {ERR invalid expire time in 'hsetex' command}
 
-    # test {HSETEX EX - test non-numeric ttl} {
-    #     set ttl abc
-    #     catch {r HSETEX myhash EX $ttl FIELDS 1 field1 val1} e
-    #     set e
-    # } {ERR Syntax error}
+    test {HSETEX EX - test non-numeric ttl} {
+        set ttl abc
+        catch {r HSETEX myhash EX $ttl FIELDS 1 field1 val1} e
+        set e
+    } {ERR value is not an integer or out of range}
 
     test {HSETEX EX - overwrite field resets TTL} {
         r FLUSHALL        
@@ -84,11 +83,10 @@ start_server {tags {"hashexpire external:skip"}} {
         set e
     } {ERR syntax error}
 
-# fields != actual number of fields is accepted!
-    # test {HSETEX EX - mismatched field/value count} {
-    #     catch {r HSETEX myhash EX 10 FIELDS 2 field1 val1} e
-    #     set e
-    # } {ERR wrong number of arguments for 'hsetex' command}
+    test {HSETEX EX - mismatched field/value count} {
+        catch {r HSETEX myhash EX 10 FIELDS 2 field1 val1} e
+        set e
+    } {ERR *}
 
 
 
@@ -275,35 +273,6 @@ start_server {tags {"hashexpire external:skip"}} {
         assert {$moved_ttl > 0 && $moved_ttl <= $original_ttl}
     }
 
-# error
-    # test {HEXPIRE - extend TTL of expired field before lazy deletion} {
-    #     r FLUSHALL
-    #     r debug SET-ACTIVE-EXPIRE no
-
-    #     # This test checks whether a lazily expired field can have its TTL refreshed
-    #     # using HEXPIRE, without accessing or modifying the field's value.
-    #     # If the field is still in memory and hasn't been lazily deleted yet,
-    #     # HEXPIRE should succeed and extend its life.
-    #     # TODO: Is this the desired behavior though? shouldn't the expired field be removed anyway and the command to fail?
-
-    #     r HSETEX myhash PX 10 FIELDS 1 field1 val1
-    #     after 20
-
-    #     # Field should still be present in memory due to lazy expiry
-    #     assert_equal 1 [r HLEN myhash]
-
-    #     # Refresh TTL before triggering lazy deletion    
-    #     r HEXPIRE myhash 100 FIELDS 1 field1
-
-    #     # Confirm TTL is updated and field is still accessible
-    #     set ttl [r HTTL myhash FIELDS 1 field1]
-    #     # 10 Seconds grace period
-    #     assert {$ttl > 90}      
-    #     assert_equal val1 [r HGET myhash field1]
-
-    #     r debug SET-ACTIVE-EXPIRE yes
-    # }
-
 test {HSET - overwrite lazily expired field without TTL clears expiration} {
     r FLUSHALL
     r debug SET-ACTIVE-EXPIRE no
@@ -409,7 +378,6 @@ test {HDEL - lazily expired field is removed without triggering expiry logic} {
         assert {$ttl > 0}
     }
 
-# should return 2
     test {HEXPIRE - TTL 0 deletes field} {
         r FLUSHALL
         r HSET myhash field1 goodbye
@@ -491,7 +459,6 @@ test {HDEL - lazily expired field is removed without triggering expiry logic} {
         assert {$ttl >= 2}
     }
 
-# change error msg
     # Error Cases
     test {HEXPIRE - conflicting conditions error} {
         r FLUSHALL
@@ -507,13 +474,12 @@ test {HDEL - lazily expired field is removed without triggering expiry logic} {
         set e
     } {ERR wrong number of arguments for 'hexpire' command}
 
-# you allow fields 0 
-    # test {HEXPIRE - no fields after FIELDS keyword} {
-    #     r FLUSHALL
-    #     r HSET myhash field1 val
-    #     catch {r HEXPIRE myhash 10 FIELDS 0} e
-    #     set e
-    # } {ERR wrong number of arguments for 'hexpire' command}
+    test {HEXPIRE - no fields after FIELDS keyword} {
+        r FLUSHALL
+        r HSET myhash field1 val
+        catch {r HEXPIRE myhash 10 FIELDS 0} e
+        set e
+    } {ERR wrong number of arguments for 'hexpire' command}
 
     test {HEXPIRE - non-integer TTL error} {
         r FLUSHALL
@@ -554,12 +520,11 @@ test {HDEL - lazily expired field is removed without triggering expiry logic} {
         assert_equal -1 [r HTTL myhash FIELDS 1 field1]
     } {}
 
-# crash: r HTTL myhash FIELDS 1 nofield
-    # test {HTTL - non-existent field returns -2} {
-    #     r FLUSHALL
-    #     r HSET myhash field1 val1
-    #     assert_equal -2 [r HTTL myhash FIELDS 1 nofield]
-    # } {}
+    test {HTTL - non-existent field returns -2} {
+        r FLUSHALL
+        r HSET myhash field1 val1
+        assert_equal -2 [r HTTL myhash FIELDS 1 nofield]
+    } {}
 
     test {HTTL - non-existent key returns -2} {
         r FLUSHALL
@@ -700,14 +665,13 @@ test {HDEL - lazily expired field is removed without triggering expiry logic} {
     set e
     } {ERR wrong number of arguments for 'hexpireat' command}
 
-# 0 fields
-    # test {HEXPIREAT - no fields after FIELDS} {
-    #     r FLUSHALL
-    #     r HSET myhash field1 val
-    #     set ts [expr {[clock seconds] + 5}]
-    #     catch {r HEXPIREAT myhash $ts FIELDS 0} e
-    #     set e
-    # } {ERR wrong number of arguments for 'hexpireat' command}
+    test {HEXPIREAT - no fields after FIELDS} {
+        r FLUSHALL
+        r HSET myhash field1 val
+        set ts [expr {[clock seconds] + 5}]
+        catch {r HEXPIREAT myhash $ts FIELDS 0} e
+        set e
+    } {ERR wrong number of arguments for 'hexpireat' command}
 
     test {HEXPIREAT - non-integer timestamp} {
         r FLUSHALL
@@ -780,21 +744,19 @@ test {HDEL - lazily expired field is removed without triggering expiry logic} {
         set e
     } {ERR wrong number of arguments for 'hexpiretime' command}
 
-    # why fields 0 is allowed?
-    # test {HEXPIRETIME - FIELDS 0} {
-    #     r FLUSHALL
-    #     r HSET myhash f1 a
-    #     catch {r HEXPIRETIME myhash FIELDS 0} e
-    #     set e
-    # } {ERR wrong number of arguments for 'hexpiretime' command}
+     test {HEXPIRETIME - FIELDS 0} {
+         r FLUSHALL
+         r HSET myhash f1 a
+         catch {r HEXPIRETIME myhash FIELDS 0} e
+         set e
+     } {ERR wrong number of arguments for 'hexpiretime' command}
 
-# why fields 0 is allowed?
-    # test {HEXPIRETIME - wrong FIELDS count} {
-    #     r FLUSHALL
-    #     r HSET myhash f1 a
-    #     catch {r HEXPIRETIME myhash FIELDS 1} e
-    #     set e
-    # } {ERR wrong number of arguments for 'hexpiretime' command}
+     test {HEXPIRETIME - wrong FIELDS count} {
+         r FLUSHALL
+         r HSET myhash f1 a
+         catch {r HEXPIRETIME myhash FIELDS 1} e
+         set e
+     } {ERR wrong number of arguments for 'hexpiretime' command}
 
     test {HEXPIRETIME - wrong type key} {
         r FLUSHALL
@@ -869,7 +831,6 @@ test {HDEL - lazily expired field is removed without triggering expiry logic} {
         assert_equal {1} $res_lt_pass
     }
 
-# 
     test {HPEXPIREAT - invalid inputs} {
         r FLUSHALL
         r HSET myhash f1 a

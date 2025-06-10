@@ -4,7 +4,7 @@
         "complexity": "O(1) for each field assigned with TTL, so O(N) to add N TTLs when the command is called with multiple fields.",
         "group": "hash",
         "since": "7.2.4",
-        "arity": -5,
+        "arity": -6,
         "function": "hexpireCommand",
         "command_flags": [
             "WRITE",
@@ -104,7 +104,8 @@
                     {
                         "name": "numfields",
                         "type": "integer",
-                        "multiple": false
+                        "multiple": false,
+                        "minimum": 1
                     },
                     {
                         "name": "field",

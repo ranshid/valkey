@@ -4,7 +4,7 @@
         "complexity": "O(1) for each field, so O(N) for N items when the command is called with multiple fields.",
         "group": "hash",
         "since": "9.0.0",
-        "arity": -3,
+        "arity": -5,
         "function": "hexpiretimeCommand",
         "command_flags": [
             "READONLY",
@@ -70,7 +70,8 @@
                         "name": "numfields",
                         "type": "integer",
                         "key_spec_index": 0,
-                        "multiple": false
+                        "multiple": false,
+                        "minimum": 1
                     },
                     {
                         "name": "field",
