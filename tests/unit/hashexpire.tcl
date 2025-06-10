@@ -279,12 +279,15 @@ test {HSET - overwrite lazily expired field without TTL clears expiration} {
 
     # This test verifies that if a field has expired (but not yet lazily deleted),
     # and it is overwritten using a plain HSET (i.e., no TTL),
-    # Redis treats the field as still existing and updates it,
+    # Valkey treats the field as non existing and updates it,
     # effectively clearing the old TTL and making the field persistent.
-    # TODO: Is this the desired behavior though? shouldn't the expired field be removed anyway and the command to fail?
-
+   
     r HSETEX myhash PX 10 FIELDS 1 field1 oldval
-    after 20
+    wait_for_condition 100 100 {
+        [r HTTL myhash FIELDS 1 field1] eq "-2"
+    } else {
+        fail "hash value was not expired after timeout"
+    }
 
     # Field should still be present in memory due to lazy expiry
     assert_equal 1 [r HLEN myhash]
@@ -296,6 +299,38 @@ test {HSET - overwrite lazily expired field without TTL clears expiration} {
     set ttl [r HPTTL myhash FIELDS 1 field1]
     assert_equal -1 $ttl
     assert_equal newval [r HGET myhash field1]
+    assert_equal 1 [r HLEN myhash]
+
+    r debug SET-ACTIVE-EXPIRE yes
+}
+
+test {HINCRBY - on expired field} {
+    r FLUSHALL
+    r debug SET-ACTIVE-EXPIRE no
+
+    # This test verifies that if a field has expired,
+    # and it is overwritten using a plain HINCRBY (i.e., no TTL),
+    # Valkey treats the field as still existing and updates it,
+    # effectively clearing the old TTL and starting the value from 0.
+   
+    r HSETEX myhash PX 10 FIELDS 1 field1 1
+    wait_for_condition 100 100 {
+        [r HTTL myhash FIELDS 1 field1] eq "-2"
+    } else {
+        fail "hash value was not expired after timeout"
+    }
+
+    # Field should still be present in memory due to lazy expiry
+    assert_equal 1 [r HLEN myhash]
+
+    # Overwrite with HINCRBY (no TTL) before accessing
+    r HINCRBY myhash field1 1
+
+    # TTL should now be gone; field becomes persistent
+    set ttl [r HPTTL myhash FIELDS 1 field1]
+    assert_equal -1 $ttl
+    assert_equal 1 [r HGET myhash field1]
+    assert_equal 1 [r HLEN myhash]
 
     r debug SET-ACTIVE-EXPIRE yes
 }
@@ -331,10 +366,10 @@ test {HDEL - lazily expired field is removed without triggering expiry logic} {
     r FLUSHALL
     r debug SET-ACTIVE-EXPIRE no
 
-    # This test proves that deleting a lazily expired field with HDEL
-    # does NOT trigger Redis's expiration mechanism.
+    # This test proves that deleting an expired field with HDEL
+    # does NOT trigger Valkey's expiration mechanism.
     #
-    # The key observation is that Redis tracks how many fields were
+    # The key observation is that Valkey tracks how many fields were
     # expired via TTL using the `expired_subkeys` counter in INFO stats.
     # If HDEL caused expiration to be processed internally,
     # this counter would increment. We assert that it remains unchanged.
@@ -865,7 +900,47 @@ test {HDEL - lazily expired field is removed without triggering expiry logic} {
         assert_equal -2 [lindex $result 2]
 
     }
+
+    #################### HPERSIST ##################
+
+    test "HPERSIST - field does not exist" {
+        r FLUSHALL
+        r hset myhash field1 value1
+        assert_equal {-2} [r hpersist myhash FIELDS 1 field2]
+    }
+
+    test "HPERSIST - key does not exist" {
+        r FLUSHALL
+        assert_equal {-2} [r hpersist nonexistent FIELDS 1 field1]
+    }
+
+    test "HPERSIST - field exists but no expiration" {
+        r del myhash
+        r hset myhash field1 value1
+        assert_equal {-1} [r hpersist myhash FIELDS 1 field1]
+    }
+
+    test "HPERSIST - field exists with expiration" {
+        r FLUSHALL
+        r hset myhash field1 value1
+        r hexpire myhash 600 FIELDS 1 field1
+        assert_morethan [r httl myhash FIELDS 1 field1] 0
+        assert_equal {1} [r hpersist myhash FIELDS 1 field1]
+        assert_equal {-1} [r httl myhash FIELDS 1 field1]
+    }
+
+    test "HPERSIST - multiple fields with mixed state" {
+        r FLUSHALL
+        r hset myhash f1 v1
+        r hset myhash f2 v2
+        r hset myhash f3 v3
+        r hexpire myhash 600 FIELDS 1 f1
+        # f2 will have no expiration
+        # f4 does not exist
+        assert_equal {1 -1 -2} [r hpersist myhash FIELDS 3 f1 f2 f4]
+    }
 }
+
 
 ####### Test info
 start_server {tags {"hash-ttl-info external:skip"}} {    

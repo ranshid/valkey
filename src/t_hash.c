@@ -262,10 +262,22 @@ static hashTypeEntry *hashTypeEntryUpdate(hashTypeEntry *entry, sds value, long 
         return entry;
 
     } else {
-        hashTypeEntry *new_entry = hashTypeCreateEntry(hashTypeEntryGetField(entry), value, ttl);
-        freeHashTypeEntry(entry);
-        return new_entry;
+        /* Check if the value can be reused. */
+        if (!update_value) {
+            int value_was_embedded = !entryHasValuePtr(entry);
+            /* In case the original entry value is embedded and we know the destination entry will be able to embed the value
+             * We should duplicate the value. */
+            if (value_was_embedded && required_size <= EMBED_VALUE_MAX_ALLOC_SIZE)
+                value = sdsdup(value);
+            /* if not we have to duplicate it, remove it from the original entry since we are going to delete it.*/
+            else if (!value_was_embedded)
+                hashTypeEntrySetValue(entry, NULL);
+        }
     }
+
+    hashTypeEntry *new_entry = hashTypeCreateEntry(hashTypeEntryGetField(entry), value, ttl);
+    freeHashTypeEntry(entry);
+    return new_entry;
 }
 
 /* Returns memory usage of a hashTypeEntry, including all allocations owned by
@@ -309,10 +321,7 @@ static inline hashTypeEntry *hashTypeEntrySetExpiry(hashTypeEntry *entry, long l
         memcpy(buf, &expiry, sizeof(expiry));
         return entry;
     }
-    hashTypeEntry *new_entry = hashTypeCreateEntry(hashTypeEntryGetField(entry),
-                                                   sdsdup(hashTypeEntryGetValue(entry)),
-                                                   expiry);
-    freeHashTypeEntry(entry);
+    hashTypeEntry *new_entry = hashTypeEntryUpdate(entry, NULL, expiry);
     return new_entry;
 }
 
@@ -382,7 +391,7 @@ void hashTypeFreeVolatileSet(robj *o) {
 }
 
 int hashTypeHasVolatileElements(robj *o) {
-    return o->encoding == OBJ_ENCODING_HASHTABLE && hashTypeGetVolatileSet(o);
+    return ((o->encoding == OBJ_ENCODING_HASHTABLE) && (hashTypeGetVolatileSet(o) != NULL));
 }
 
 size_t hashTypeNumVolatileElements(robj *o) {
@@ -392,6 +401,16 @@ size_t hashTypeNumVolatileElements(robj *o) {
     return 0;
 }
 
+void hashTypeIgnoreTTL(robj *o, int ignore) {
+    if (o->encoding == OBJ_ENCODING_HASHTABLE) {
+        /* prevent placing access function if not needed */
+        if (!ignore && !hashTypeHasVolatileElements(o)) {
+            ignore = 0;
+        }
+        hashtableSetType(o->ptr, ignore ? &hashHashtableType : &hashWithVolatileItemsHashtableType);
+    }
+}
+
 static volatile_set *
 hashTypeGetOrcreateVolatileSet(robj *o) {
     serverAssert(o->encoding == OBJ_ENCODING_HASHTABLE);
@@ -399,7 +418,7 @@ hashTypeGetOrcreateVolatileSet(robj *o) {
     if (*volatile_set_ref == NULL) {
         *volatile_set_ref = createVolatileSet(&hashvolatileEntryType);
         /* serves mainly for optimization. Use type which supports access function only when needed. */
-        hashtableSetType(o->ptr, &hashWithVolatileItemsHashtableType);
+        hashTypeIgnoreTTL(o, 0);
     }
     return *volatile_set_ref;
 }
@@ -409,7 +428,7 @@ static void hashTypeDeleteVolatileSet(robj *o) {
     freeVolatileSet(*volatile_set_ref);
     *volatile_set_ref = NULL;
     /* serves mainly for optimization. by changing the hashtable type we can avoid extra function call in hashtable access */
-    hashtableSetType(o->ptr, &hashHashtableType);
+    hashTypeIgnoreTTL(o, 1);
 }
 
 void hashTypeTrackEntry(robj *o, void *entry) {
@@ -695,6 +714,10 @@ int hashTypeSet(robj *o, sds field, sds value, long long expiry, int flags) {
         } else {
             v = sdsdup(value);
         }
+
+        /* We have to ignore the TTL when setting an element. this is mainly in order to be able to update an existing expired
+         * entry and not have it remain in the hashtable with the same field/value. */
+        hashTypeIgnoreTTL(o, 1);
         hashtablePosition position;
         void *existing;
         if (hashtableFindPositionForInsert(ht, field, &position, &existing)) {
@@ -708,9 +731,11 @@ int hashTypeSet(robj *o, sds field, sds value, long long expiry, int flags) {
         } else {
             /* exists: replace value */
             long long entry_expiry = hashTypeEntryGetExpiry(existing);
-
+            /* It is possible that the entry is already expired. In this case we can override it, but we need to make sure to treat it
+             * like it did not exist. */
+            int is_expired = timestampIsExpired(entry_expiry);
             /* In case the HASH_SET_KEEP_EXPIRY will force keeping the existing entry expiry. */
-            if (flags & HASH_SET_KEEP_EXPIRY)
+            if (!is_expired && (flags & HASH_SET_KEEP_EXPIRY))
                 expiry = entry_expiry;
             void *new_entry = hashTypeEntryUpdate(existing, v, expiry);
             if (new_entry != existing) {
@@ -720,8 +745,9 @@ int hashTypeSet(robj *o, sds field, sds value, long long expiry, int flags) {
             }
             hashTypeTrackUpdateEntry(o, existing, new_entry, entry_expiry, expiry);
 
-            update = 1;
+            update = is_expired ? 0 : 1;
         }
+        hashTypeIgnoreTTL(o, 0);
     } else {
         serverPanic("Unknown hash encoding");
     }
@@ -819,7 +845,7 @@ int hashTypePersist(robj *o, sds field) {
         long long current_expire = hashTypeEntryGetExpiry(current_entry);
         if (current_expire != EXPIRY_NONE) {
             hashTypeUntrackEntry(o, current_entry);
-            *entry_ref = hashTypeEntryUpdate(current_entry, hashTypeEntryGetValue(current_entry), EXPIRY_NONE);
+            *entry_ref = hashTypeEntryUpdate(current_entry, NULL, EXPIRY_NONE);
             return 1;
         }
         return -1; // If the found element has no expiration set, return -1
@@ -1810,7 +1836,7 @@ void hpersistCommand(client *c) {
 
     robj *hash = lookupKeyWrite(c->db, c->argv[1]);
 
-    for (; fields_index < num_fields; fields_index++) {
+    for (int i = 0; i < num_fields; i++, fields_index++) {
         result = hashTypePersist(hash, c->argv[fields_index]->ptr);
         server.dirty += (result > 0 ? 1 : 0); // in case there was a change increment the dirty
         changes += (result > 0 ? 1 : 0);
