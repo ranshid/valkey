@@ -456,9 +456,9 @@ test {HDEL - lazily expired field is removed without triggering expiry logic} {
     # Conditionals: GT
     test {HEXPIRE GT - only set if new TTL > existing TTL} {
         r FLUSHALL
-        r HSETEX myhash PX 50 FIELDS 1 field1 val1
+        r HSETEX myhash EX 300 FIELDS 1 field1 val1
         after 10
-        set res [r HEXPIRE myhash 1 GT FIELDS 1 field1]  ;# 1s > ~40ms remaining
+        set res [r HEXPIRE myhash 600 GT FIELDS 1 field1]  ;# 600s > 300s remaining
         assert_equal {1} $res
 
         # GT should fail if field is persistent
@@ -470,7 +470,7 @@ test {HDEL - lazily expired field is removed without triggering expiry logic} {
     # Conditionals: LT
     test {HEXPIRE LT - only set if new TTL < existing TTL} {
         r FLUSHALL
-        r HSETEX myhash PX 10000 FIELDS 1 field1 val1
+        r HSETEX myhash EX 600 FIELDS 1 field1 val1
         set res [r HEXPIRE myhash 1 LT FIELDS 1 field1]
         assert_equal {1} $res
 
