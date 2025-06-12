@@ -666,13 +666,11 @@ hashtableType subcommandSetType = {.entryGetKey = hashtableSubcommandGetKey,
 
 /* Hash type hash table (note that small hashes are represented with listpacks) */
 const void *hashHashtableTypeGetKey(const void *entry) {
-    const hashTypeEntry *hash_entry = entry;
-    return (const void *)hashTypeEntryGetField(hash_entry);
+    return (const void *)entryGetField(entry);
 }
 
 void hashHashtableTypeDestructor(void *entry) {
-    hashTypeEntry *hash_entry = entry;
-    freeHashTypeEntry(hash_entry);
+    freeentry(entry);
 }
 
 size_t hashHashtableTypeMetadataSize(void) {

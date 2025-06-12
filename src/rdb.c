@@ -972,8 +972,8 @@ ssize_t rdbSaveObject(rio *rdb, robj *o, robj *key, int dbid) {
             hashtableInitIterator(&iter, ht, HASHTABLE_ITER_AVOID_ACCESS);
             void *next;
             while (hashtableNext(&iter, &next)) {
-                sds field = hashTypeEntryGetField(next);
-                sds value = hashTypeEntryGetValue(next);
+                sds field = entryGetField(next);
+                sds value = entryGetValue(next);
 
                 if ((n = rdbSaveRawString(rdb, (unsigned char *)field, sdslen(field))) == -1) {
                     hashtableResetIterator(&iter);
@@ -986,7 +986,7 @@ ssize_t rdbSaveObject(rio *rdb, robj *o, robj *key, int dbid) {
                 }
                 nwritten += n;
                 if (add_expiry) {
-                    long long expiry = hashTypeEntryGetExpiry(next);
+                    long long expiry = entryGetExpiry(next);
                     if ((n = rdbSaveMillisecondTime(rdb, expiry) == -1)) {
                         hashtableResetIterator(&iter);
                         return -1;
@@ -2143,12 +2143,12 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
                 (sdslen(field) > server.hash_max_listpack_value || sdslen(value) > server.hash_max_listpack_value ||
                  !lpSafeToAdd(o->ptr, sdslen(field) + sdslen(value)))) {
                 hashTypeConvert(o, OBJ_ENCODING_HASHTABLE);
-                hashTypeEntry *entry = hashTypeCreateEntry(field, value, EXPIRY_NONE);
+                entry *entry = entryCreate(field, value, EXPIRY_NONE);
                 sdsfree(field);
                 if (!hashtableAdd((hashtable *)o->ptr, entry)) {
                     rdbReportCorruptRDB("Duplicate hash fields detected");
                     if (dupSearchHashtable) hashtableRelease(dupSearchHashtable);
-                    freeHashTypeEntry(entry);
+                    freeentry(entry);
                     decrRefCount(o);
                     return NULL;
                 }
@@ -2201,11 +2201,11 @@ robj *rdbLoadObject(int rdbtype, rio *rdb, sds key, int dbid, int *error) {
             }
 
             /* Add pair to hash table */
-            hashTypeEntry *entry = hashTypeCreateEntry(field, value, itemexpiry);
+            entry *entry = entryCreate(field, value, itemexpiry);
             sdsfree(field);
             if (!hashtableAdd((hashtable *)o->ptr, entry)) {
                 rdbReportCorruptRDB("Duplicate hash fields detected");
-                freeHashTypeEntry(entry);
+                freeentry(entry);
                 decrRefCount(o);
                 return NULL;
             }

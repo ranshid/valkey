@@ -1969,7 +1969,7 @@ int rewriteHashObject(rio *r, robj *key, robj *o) {
             }
         }
 
-        if (volatile_items > 0 && hashTypeEntryHasExpire(hi.next))
+        if (volatile_items > 0 && entryHasExpiry(hi.next))
             continue;
 
         if (!rioWriteHashIteratorCursor(r, &hi, OBJ_HASH_FIELD) || !rioWriteHashIteratorCursor(r, &hi, OBJ_HASH_VALUE)) {
@@ -1986,9 +1986,9 @@ int rewriteHashObject(rio *r, robj *key, robj *o) {
     if (hashTypeHasVolatileElements(o)) {
         hashTypeInitVolatileIterator(o, &hi);
         while (hashTypeNext(&hi) != C_ERR) {
-            long long expiry = hashTypeEntryGetExpiry(hi.next);
-            sds field = hashTypeEntryGetField(hi.next);
-            sds value = hashTypeEntryGetValue(hi.next);
+            long long expiry = entryGetExpiry(hi.next);
+            sds field = entryGetField(hi.next);
+            sds value = entryGetValue(hi.next);
             if (rioWriteBulkCount(r, '*', 8) == 0) return 0;
             if (rioWriteBulkString(r, "HSETEX", 6) == 0) return 0;
             if (rioWriteBulkObject(r, key) == 0) return 0;

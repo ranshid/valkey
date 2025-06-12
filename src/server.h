@@ -84,6 +84,7 @@ typedef long long ustime_t; /* microsecond time type. */
 #include "memory_prefetch.h"
 #include "volatile_set.h"
 #include "trace/trace.h"
+#include "entry.h"
 
 #ifdef USE_LTTNG
 #define valkey_fork() do_fork()
@@ -3359,16 +3360,7 @@ robj *setTypeDup(robj *o);
 #define HASH_SET_KEEP_EXPIRY (1 << 2)
 #define HASH_SET_COPY 0
 
-typedef void hashTypeEntry;
-hashTypeEntry *hashTypeCreateEntry(sds field, sds value, long long ttl);
-sds hashTypeEntryGetField(const hashTypeEntry *entry);
-sds hashTypeEntryGetValue(const hashTypeEntry *entry);
-long long hashTypeEntryGetExpiry(const hashTypeEntry *entry);
-int hashTypeEntryHasExpire(const hashTypeEntry *entry);
-size_t hashTypeEntryMemUsage(hashTypeEntry *entry);
-hashTypeEntry *hashTypeEntryDefrag(hashTypeEntry *entry, void *(*defragfn)(void *), sds (*sdsdefragfn)(sds));
-void dismissHashTypeEntry(hashTypeEntry *entry);
-void freeHashTypeEntry(hashTypeEntry *entry);
+
 void hashTypeFreeVolatileSet(robj *o);
 void hashTypeTrackEntry(robj *o, void *entry);
 void hashTypeUntrackEntry(robj *o, void *entry);

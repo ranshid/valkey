@@ -989,9 +989,9 @@ void hashtableScanCallback(void *privdata, void *entry) {
         key = node->ele;
         /* zset data is copied after filtering by key */
     } else if (o->type == OBJ_HASH) {
-        key = hashTypeEntryGetField(entry);
+        key = entryGetField(entry);
         if (!data->only_keys) {
-            val = hashTypeEntryGetValue(entry);
+            val = entryGetValue(entry);
         }
     } else {
         serverPanic("Type not handled in hashtable SCAN callback.");
