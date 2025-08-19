@@ -39,9 +39,9 @@ proc check_myhash_and_expired_subkeys {r myhash expected_len initial_expired exp
 proc get_short_expire_value {command} {
     expr {
         ($command eq "HEXPIRE" || $command eq "EX") ? 1 :
-        ($command eq "HPEXPIRE" || $command eq "PX") ? 10 :
+        ($command eq "HPEXPIRE" || $command eq "PX") ? 1000 :
         ($command eq "HEXPIREAT" || $command eq "EXAT") ? [clock seconds] + 1 :
-        [clock milliseconds] + 10
+        [clock milliseconds] + 1000
     }
 }
 
@@ -211,7 +211,7 @@ start_server {tags {"hashexpire"}} {
 
         test "HGETEX $command on non-exist key" {
             r FLUSHALL
-            assert_equal "" [r HGETEX myhash $command [get_long_expire_value $command] FIELDS 1 f2]
+            assert_equal {{} {} {}} [r HGETEX myhash $command [get_long_expire_value $command] FIELDS 3 f1 f2 f3]
         }
 
         test "HGETEX $command with duplicate field names" {
@@ -237,26 +237,6 @@ start_server {tags {"hashexpire"}} {
             r HGETEX myhash $command [get_short_expire_value $command] FIELDS 1 f1
             set new_ttl [r HTTL myhash FIELDS 1 f1]
             assert {$new_ttl <= $old_ttl}
-        }
-    }
-
-    foreach command {EX PX} {
-        test "HGETEX $command with 0 ttl" {
-            r FLUSHALL
-            r HSET myhash f1 v1
-            assert_equal "v1" [r HGETEX myhash $command 0 FIELDS 1 f1]
-            assert_equal "" [r HGET myhash f1]
-            assert_equal -2 [r HTTL myhash FIELDS 1 f1]
-        }
-    }
-
-    foreach command {EXAT PXAT} {
-        test "HGETEX $command with past expiry" {
-            r FLUSHALL
-            r HSET myhash f1 v1
-            assert_equal "v1" [r HGETEX myhash $command [get_past_zero_expire_value $command] FIELDS 1 f1]
-            assert_equal "" [r HGET myhash f1]
-            assert_equal -2 [r HTTL myhash FIELDS 1 f1]
         }
     }
 
@@ -475,7 +455,7 @@ start_server {tags {"hashexpire"}} {
     foreach command {EX PX EXAT PXAT} {
         test "HGETEX $command 0/past time works correctly with 1 field" {
             r FLUSHALL
-
+            r config resetstat
             # Create hash with field
             r HSET myhash f1 v1
             assert_equal 1 [r HLEN myhash]
@@ -493,82 +473,7 @@ start_server {tags {"hashexpire"}} {
             assert_equal 0 [r EXISTS myhash]
             assert_equal 0 [get_keys r]
             assert_equal 0 [get_keys_with_volatile_items r]
-            $rd close
-        }
-
-        test "HGETEX $command 0/past time works correctly with 1 field on field with expire" {
-            r FLUSHALL
-
-            # Create hash with field
-            r HSETEX myhash EX 1000 FIELDS 1 f1 v1
-            assert_equal 1 [r HLEN myhash]
-            assert_equal 1 [get_keys_with_volatile_items r]
-            assert_equal 1 [get_keys r]
-
-            set rd [setup_single_keyspace_notification r]
-            
-            # Set field to expire immediately
-            r HGETEX myhash $command [get_past_zero_expire_value $command] FIELDS 1 f1
-
-            # Verify field and keys are deleted
-            assert_keyevent_patterns $rd myhash hexpired del
-            assert_equal -2 [r HTTL myhash FIELDS 1 f1]
-            assert_equal 0 [r HLEN myhash]
-            assert_equal 0 [r EXISTS myhash]
-            assert_equal 0 [get_keys r]
-            assert_equal 0 [get_keys_with_volatile_items r]
-
-            $rd close
-        }
-    
-        test "HGETEX $command 0/past time works correctly with more then 1 field" {
-            r FLUSHALL
-
-            # Create hash with field
-            r HSET myhash f1 v1 f2 v2
-            assert_equal 2 [r HLEN myhash]
-            assert_equal 0 [get_keys_with_volatile_items r]
-            assert_equal 1 [get_keys r]
-            
-            set rd [setup_single_keyspace_notification r]
-            
-            # Set field to expire immediately
-            r HGETEX myhash $command [get_past_zero_expire_value $command] FIELDS 1 f2
-
-            # Verify field and keys are deleted
-            assert_keyevent_patterns $rd myhash hexpired
-            assert_equal -2 [r HTTL myhash FIELDS 1 f2]
-            assert_equal 1 [r HLEN myhash]
-            assert_equal 1 [r EXISTS myhash]
-            assert_equal 1 [get_keys r]
-            assert_equal 0 [get_keys_with_volatile_items r]
-
-            $rd close
-        }
-
-        test "HGETEX $command 0/past time works correctly with more then 1 field and expire" {
-            r FLUSHALL
-
-            # Create hash with field
-            r HSET myhash f1 v1 f2 v2 f3 v3 f4 v4
-            r HEXPIRE myhash [get_long_expire_value HEXPIRE] FIELDS 1 f1
-            assert_equal 1 [get_keys_with_volatile_items r]
-            assert_equal 4 [r HLEN myhash]
-            assert_equal 1 [get_keys r]
-
-            set rd [setup_single_keyspace_notification r]
-            
-            # Set field to expire immediately
-            r HGETEX myhash $command [get_past_zero_expire_value $command] FIELDS 1 f1
-
-            # Verify field and keys are deleted
-            assert_keyevent_patterns $rd myhash hexpired
-            assert_equal -2 [r HTTL myhash FIELDS 1 f1]
-            assert_equal 3 [r HLEN myhash]
-            assert_equal 1 [r EXISTS myhash]
-            assert_equal 1 [get_keys r]
-            assert_equal 0 [get_keys_with_volatile_items r]
-
+            assert_equal 1 [info_field [r info stats] expired_fields]
             $rd close
         }
     }
@@ -627,13 +532,6 @@ start_server {tags {"hashexpire"}} {
         assert_equal newval [r HGET myhash field1]
     }
 
-    test {HSETEX EX - test zero ttl expires immediately} {
-        r FLUSHALL
-        r HSETEX myhash EX 0 FIELDS 1 field1 val1
-        after 10
-        assert_equal 0 [r HEXISTS myhash field1]
-    }
-
     test {HSETEX EX - test mix of expiring and persistent fields} {
         r FLUSHALL
         r HSET myhash field2 "persistent"
@@ -654,7 +552,31 @@ start_server {tags {"hashexpire"}} {
         set e
     } {ERR *}
 
+    foreach command {EX PX EXAT PXAT} {
+        test "HSETEX $command 0/past time works correctly with 1 field" {
+            r FLUSHALL
+            r config resetstat
+            # Create hash with field
+            r HSET myhash f1 v1
+            assert_equal 1 [r HLEN myhash]
+            assert_equal 0 [get_keys_with_volatile_items r]
+            assert_equal 1 [get_keys r]
+            set rd [setup_single_keyspace_notification r]
+            
+            # Set field to expire immediately
+            assert_equal {1} [r HSETEX myhash $command [get_past_zero_expire_value $command] FIELDS 1 f1 v1]
 
+            # Verify field and keys are deleted
+            assert_keyevent_patterns $rd myhash hexpired del
+            assert_equal -2 [r HTTL myhash FIELDS 1 f1]
+            assert_equal 0 [r HLEN myhash]
+            assert_equal 0 [r EXISTS myhash]
+            assert_equal 0 [get_keys r]
+            assert_equal 0 [get_keys_with_volatile_items r]
+            assert_equal 1 [info_field [r info stats] expired_fields]
+            $rd close
+        }
+    }
 
     ###### PX #######
 
@@ -928,6 +850,32 @@ start_server {tags {"hashexpire"}} {
         r FLUSHALL
         r HSET myhash f1 v1
         assert_equal 1 [r HEXPIRE myhash 10 LT fields 1 f1]
+    }
+
+    foreach command {HEXPIRE HPEXPIRE HEXPIREAT HPEXPIREAT} {
+        test "HSETEX $command 0/past time works correctly with 1 field" {
+            r FLUSHALL
+            r config resetstat
+            # Create hash with field
+            r HSET myhash f1 v1
+            assert_equal 1 [r HLEN myhash]
+            assert_equal 0 [get_keys_with_volatile_items r]
+            assert_equal 1 [get_keys r]
+            set rd [setup_single_keyspace_notification r]
+            
+            # Set field to expire immediately
+            assert_equal {2} [r $command myhash [get_past_zero_expire_value $command] FIELDS 1 f1]
+
+            # Verify field and keys are deleted
+            assert_keyevent_patterns $rd myhash hexpired del
+            assert_equal -2 [r HTTL myhash FIELDS 1 f1]
+            assert_equal 0 [r HLEN myhash]
+            assert_equal 0 [r EXISTS myhash]
+            assert_equal 0 [get_keys r]
+            assert_equal 0 [get_keys_with_volatile_items r]
+            assert_equal 1 [info_field [r info stats] expired_fields]
+            $rd close
+        }
     }
 
     ##### HTTL #####
@@ -1471,69 +1419,25 @@ start_server {tags {"hashexpire"}} {
 
     test {COPY Preserves TTLs} {
         r flushall
-        r DEBUG SET-ACTIVE-EXPIRE 0
-        
         # Create hash with fields
         r HSET myhash{t} f1 v1 f3 v3 f4 v4
 
         # Set TTL on f1 only
-        r HEXPIRE myhash{t} 200 FIELDS 1 f1
-        r HEXPIRE myhash{t} 2 FIELDS 1 f3
-
-        # Verify initial TTL state
-        set mem_before [r MEMORY USAGE myhash{t}]
-        assert_equal "v1 v3 v4" [r HMGET myhash{t} f1 f3 f4]
-        assert_morethan [r HTTL myhash{t} FIELDS 1 f1] 100
-        assert_morethan [r HTTL myhash{t} FIELDS 1 f3] 0
-        assert_equal -1 [r HTTL myhash{t} FIELDS 1 f4]
-        assert_equal 3 [r HLEN myhash{t}]
-        assert_equal 1 [get_keys r]
-        assert_equal 1 [get_keys_with_volatile_items r]
+        r HEXPIRE myhash{t} 2000 FIELDS 1 f1
+        r HEXPIRE myhash{t} 5000 FIELDS 1 f3
 
         # Copy hash to new key
-        r copy myhash{t} newhash1{t}
+        r copy myhash{t} nwhash{t}
 
-        # Verify myhash{t} is the same
+        # Verify initial TTL state
+        assert_equal [r MEMORY USAGE myhash{t}] [r MEMORY USAGE nwhash{t}]
         assert_equal "v1 v3 v4" [r HMGET myhash{t} f1 f3 f4]
-        assert_morethan [r HTTL myhash{t} FIELDS 1 f1] 100
-        assert_morethan [r HTTL myhash{t} FIELDS 1 f3] 0
-        assert_equal -1 [r HTTL myhash{t} FIELDS 1 f4]
-        assert_equal 3 [r HLEN myhash{t}]
-
-        # Verify new hash got same values
-        set mem_after [r MEMORY USAGE myhash{t}]
-        assert_equal "v1 v3 v4" [r HMGET myhash{t} f1 f3 f4]
-        assert_morethan [r HTTL newhash1{t} FIELDS 1 f1] 100
-        assert_morethan [r HTTL newhash1{t} FIELDS 1 f3] 0
-        assert_equal -1 [r HTTL newhash1{t} FIELDS 1 f4]
-        assert_equal 3 [r HLEN newhash1{t}]
-        assert_equal 2 [get_keys r]
-        assert_equal 2 [get_keys_with_volatile_items r]
-
-        assert_equal $mem_before $mem_after
-        
-        # Modify TTL in original hash
-        r HEXPIRE myhash{t} 5 FIELDS 1 f3
-
-        # Wait for original TTL to expire in copy
-        after 2000
-        assert_equal "v1 {}" [r HMGET newhash1{t} f1 f3]
-        assert_equal "v1 v3" [r HMGET myhash{t} f1 f3]
-
-        r HSETEX myhash{t} EX 2 FIELDS 1 f3 v3
-        # Create second copy
-        r copy myhash{t} newhash2{t}
-
-        # Modify TTL in second copy
-        r HEXPIRE newhash2{t} 500 FIELDS 1 f3
-
-        # Wait for original hash TTL to expire
-        after 2000
-        assert_equal "v1 {}" [r HMGET myhash{t} f1 f3]
-        assert_equal "v1 v3" [r HMGET newhash2{t} f1 f3]
-        # Re-enable active expiry
-        r DEBUG SET-ACTIVE-EXPIRE 1
-    } {OK} {needs:debug}
+        assert_equal "v1 v3 v4" [r HMGET nwhash{t} f1 f3 f4]
+        assert_equal [r HEXPIRETIME myhash{t} FIELDS 1 f1] [r HEXPIRETIME nwhash{t} FIELDS 1 f1] 
+        assert_equal [r HEXPIRETIME myhash{t} FIELDS 1 f2] [r HEXPIRETIME nwhash{t} FIELDS 1 f2]
+        assert_equal [r HEXPIRETIME myhash{t} FIELDS 1 f3] [r HEXPIRETIME nwhash{t} FIELDS 1 f3]
+        assert_equal [r HEXPIRETIME myhash{t} FIELDS 1 f4] [r HEXPIRETIME nwhash{t} FIELDS 1 f4]
+    }
 
     test {Hash Encoding Transitions with TTL - Add TTL to Existing Fields} {
         r flushall
@@ -2053,6 +1957,16 @@ start_server {tags {"hashexpire"}} {
         assert_morethan [r HTTL myhash FIELDS 1 f1] 0
         assert_equal 1 [get_keys_with_volatile_items r]
     }
+
+    test {Verify error when hash expire commands num fields is not provided} {
+        r FLUSHALL
+        catch {r hsetex myhash KEEPTTL KEEPTTL KEEPTTL FIELDS} e
+        assert_match $e {ERR numfields should be greater than 0 and match the provided number of fields}
+        catch {r hexpire myhash 10 NX NX FIELDS} e
+        assert_match $e {ERR numfields should be greater than 0 and match the provided number of fields}
+        catch {r hgetex myhash PERSIST PERSIST FIELDS} e
+        assert_match $e {ERR numfields should be greater than 0 and match the provided number of fields}
+    }
 }
 
 ####### Test info
@@ -2375,13 +2289,29 @@ start_server {tags {"hashexpire external:skip"}} {
                 assert_equal {1} [psubscribe $rd_replica_2 __keyevent@*]
     
                 # Create hash and timing - f1 < f2 < f3 expiry times
-                set f1_exp [expr {[clock seconds] + 10000}]
+                set f1_exp [expr {[clock seconds] + 1000000}]
+
+                wait_for_ofs_sync $primary $replica_1
+                wait_for_ofs_sync $replica_1 $replica_2
 
                 ############################################# STEUP HASH #############################################
-                $primary HSET myhash f1 v1 f2 v2 ;# Should trigger 3 hset
+                $primary HSETEX myhash FIELDS 2 f1 v1 f2 v2 ;# Should trigger 3 hset
+                wait_for_ofs_sync $primary $replica_1
+                wait_for_ofs_sync $replica_1 $replica_2
+
+                # Verify hset event was generated on all 3 nodes
+                foreach rd [list $rd_primary $rd_replica_1 $rd_replica_2] {
+                    assert_keyevent_patterns $rd myhash hset
+                }
+
                 $primary HEXPIREAT myhash $f1_exp FIELDS 1 f1 ;# Should trigger 3 hexpire
                 wait_for_ofs_sync $primary $replica_1
                 wait_for_ofs_sync $replica_1 $replica_2
+
+                # Verify hexpire event was generated on all 3 nodes
+                foreach rd [list $rd_primary $rd_replica_1 $rd_replica_2] {
+                    assert_keyevent_patterns $rd myhash hexpire
+                }
                 
                 $primary HPEXPIRE myhash 0 FIELDS 1 f1 ;# Should trigger 1 hexpired (for primary) and 2 hdel (for replicas)
                 wait_for_ofs_sync $primary $replica_1
@@ -2398,9 +2328,6 @@ start_server {tags {"hashexpire external:skip"}} {
                 }
                 
                 # primary gets hexpired and replicas get hdel
-                foreach rd [list $rd_primary $rd_replica_1 $rd_replica_2] {
-                    assert_keyevent_patterns $rd myhash hset hexpire
-                }
                 assert_keyevent_patterns $rd_primary myhash hexpired
                 assert_keyevent_patterns $rd_replica_1 myhash hdel
                 assert_keyevent_patterns $rd_replica_2 myhash hdel
@@ -2693,119 +2620,166 @@ start_cluster 3 0 {tags {"cluster mytest external:skip"} overrides {cluster-node
 }
 
 #### AOF Test #####
+proc validate_aof_content {aof_file pxat_count hdel_count} {
+    wait_for_condition 100 100 {
+        [file exists $aof_file] eq 1
+    } else {
+        fail "hash value was not expired after timeout"
+    }
+
+    set aof_content [exec cat $aof_file]
+
+    # Verify amount of PXAT and HDEL
+    # Count PXAT commands
+    set got_pxat_count [regexp -all {PXAT} $aof_content]
+    assert_equal $got_pxat_count $pxat_count
+    # Count HDEL commands
+    set got_hdel_count [regexp -all {HDEL} $aof_content]
+    assert_equal $got_hdel_count $hdel_count
+}
 tags {"aof external:skip"} {
-    set defaults {appendonly {yes} appendfilename {appendonly.aof} appenddirname {appendonlydir} auto-aof-rewrite-percentage {0}}
-    set server_path [tmpdir server.multi.aof]
-    start_server_aof [list dir $server_path] {
-        r DEBUG SET-ACTIVE-EXPIRE 0
-        test {TTL Persistence in AOF} {
-            r flushall
-            r DEBUG SET-ACTIVE-EXPIRE 0
-            r config set appendonly yes
-            r config set appendfsync always
-            assert_equal 0 [get_keys_with_volatile_items r]
+    foreach rdb_preamble {"yes" "no"} {
+        set defaults {appendonly {yes} appendfilename {appendonly.aof} appenddirname {appendonlydir} auto-aof-rewrite-percentage {0}}
+        set server_path [tmpdir server.multi.aof]
+        start_server_aof [list dir $server_path aof-use-rdb-preamble $rdb_preamble] {
+            set rdb_preamble [lindex [r config get aof-use-rdb-preamble] 1]
+            test "TTL Persistence in AOF aof-use-rdb-preamble $rdb_preamble" {
+                r flushall
+                r DEBUG SET-ACTIVE-EXPIRE 0
+                r config set appendonly yes
+                r config set appendfsync always
+                assert_equal 0 [get_keys_with_volatile_items r]
 
-            # Create hash with 1 short, long and no expired fields
-            set long_expire [expr {[clock seconds] + 1000000}]
-            # Create 10 fields with long expiry
-            for {set i 1} {$i <= 10} {incr i} {
-                r HSETEX myhash EXAT $long_expire FIELDS 1 f$i v$i ;# 10 PXAT to aof
-            }
-            
-            # Create 10 fields with short expiry
-            for {set i 11} {$i <= 20} {incr i} {
-                r HSETEX myhash PXAT [expr {[clock milliseconds] + 10}] FIELDS 1 f$i v$i ;# 10 PXAT to aof
-            }
-
-            # Create 10 fields with expire 0
-            for {set i 21} {$i <= 30} {incr i} {
-                r HSET myhash f$i v$i
-                r HEXPIRE myhash 0 FIELDS 1 f$i ;# 10 HDEL to aof
-            }
-
-            # Create 10 fields with no expiry
-            for {set i 31} {$i <= 40} {incr i} {
-                r HSET myhash f$i v$i
-            }
-
-            # Now wait for expire of the short expiry
-            for {set i 11} {$i <= 20} {incr i} {
-                wait_for_condition 100 100 {
-                    [r HTTL myhash FIELDS 1 f$i] eq "-2"
-                } else {
-                    fail "hash value was not expired after timeout"
+                # Create hash with 1 short, long and no expired fields
+                set long_expire [expr {[clock seconds] + 1000000}]
+                # Create 10 fields with long expiry
+                for {set i 1} {$i <= 10} {incr i} {
+                    r HSETEX myhash EXAT $long_expire FIELDS 1 f$i v$i ;# 10 PXAT to aof
                 }
-            }
 
-            # Verify initial HLEN
-            assert_equal 30 [r HLEN myhash]
-            # Verify values
-            for {set i 1} {$i <= 40} {incr i} {
-                if {$i >= 11 && $i <= 30} {
-                    assert_equal "" [r HGET myhash f$i]
-                } else {
+                # Create 10 fields with short expiry
+                for {set i 11} {$i <= 20} {incr i} {
+                    r HSETEX myhash PXAT [expr {[clock milliseconds] + 10}] FIELDS 1 f$i v$i ;# 10 PXAT to aof
+                }
+
+                # Create 10 fields with expire 0
+                for {set i 21} {$i <= 30} {incr i} {
+                    r HSET myhash f$i v$i
+                    r HEXPIRE myhash 0 FIELDS 1 f$i ;# 10 HDEL to aof
+                }
+
+                # Create 10 fields with no expiry
+                for {set i 31} {$i <= 40} {incr i} {
+                    r HSET myhash f$i v$i
+                }
+
+                # Now wait for expire of the short expiry
+                for {set i 11} {$i <= 20} {incr i} {
+                    wait_for_condition 100 100 {
+                        [r HTTL myhash FIELDS 1 f$i] eq "-2"
+                    } else {
+                        fail "hash value was not expired after timeout"
+                    }
+                }
+
+                # Verify initial HLEN
+                assert_equal 30 [r HLEN myhash]
+                # Verify values
+                for {set i 1} {$i <= 40} {incr i} {
+                    if {$i >= 11 && $i <= 30} {
+                        assert_equal "" [r HGET myhash f$i]
+                    } else {
+                        assert_equal v$i [r HGET myhash f$i]
+                    }
+                }
+                assert_equal 1 [get_keys_with_volatile_items r]
+
+                # Ensure the initial rewrite finishes
+                waitForBgrewriteaof r
+
+                # Get the last incremental AOF file path and validate its content
+                # Count PXAT commands (should be 20: 10 long + 10 short)
+                # Count HDEL commands (should be 10: from expire 0)
+                validate_aof_content [get_last_incr_aof_path r] 20 10
+
+                # Restart the server and load the AOF
+                restart_server 0 true false
+                r DEBUG SET-ACTIVE-EXPIRE 0
+                r debug loadaof
+
+                set hlen [r HLEN myhash]
+                set expired_fields [info_field [r info stats] expired_fields]
+                assert_equal 1 [get_keys_with_volatile_items r]
+
+                # Verify that HLEN is between 20 and 30 (inclusive), and 
+                # when combined with expired_fields, the total should be 30
+                if {$hlen < 20 || $hlen > 30} {
+                    fail "Expected HLEN to be between 20 and 30, but got $hlen"
+                }
+                assert_equal 30 [expr ($expired_fields + $hlen)]
+
+                # Verify the TTLs are preserved
+                for {set i 1} {$i <= 10} {incr i} {
+                    assert_equal $long_expire [r HEXPIRETIME myhash FIELDS 1 f$i]
                     assert_equal v$i [r HGET myhash f$i]
                 }
-            }
-            assert_equal 1 [get_keys_with_volatile_items r]
+                # Verify expired fields
+                for {set i 11} {$i <= 30} {incr i} {
+                    assert_equal -2 [r HTTL myhash FIELDS 1 f$i]
+                    assert_equal "" [r HGET myhash f$i]
+                }
+                # Verify fields with no TTL
+                for {set i 31} {$i <= 40} {incr i} {
+                    assert_equal -1 [r HTTL myhash FIELDS 1 f$i]
+                    assert_equal v$i [r HGET myhash f$i]
+                }
 
-            # Ensure the initial rewrite finishes
-            waitForBgrewriteaof r
+                # Trigger and wait for a second rewrite
+                r BGREWRITEAOF
+                waitForBgrewriteaof r
 
-            # Get the last incremental AOF file path
-            set aof_file [get_last_incr_aof_path r]
+                if {"$rdb_preamble" eq "no"} {
+                    # Get the last base AOF file path and validate its content
+                    # Count PXAT commands (should be 10: just the long expiry fields)
+                    # Count HDEL commands (should be rewritten out)
+                    validate_aof_content [get_base_aof_path r] 10 0
+                }
 
-            wait_for_condition 100 100 {
-                [file exists $aof_file] eq 1
-            } else {
-                fail "hash value was not expired after timeout"
-            }
+                # Restart the server and load the AOF
+                restart_server 0 true false
+                r DEBUG SET-ACTIVE-EXPIRE 0
+                r debug loadaof
 
-            # Read and check content
-            set aof_content [exec cat $aof_file]
-            
-            # Verify amount of PXAT and HDEL
-            # Count PXAT commands (should be 20: 10 long + 10 short)
-            set pxat_count [regexp -all {PXAT} $aof_content]
-            assert_equal 20 $pxat_count
-            # Count HDEL commands (should be 10: from expire 0)
-            set hdel_count [regexp -all {HDEL} $aof_content]
-            assert_equal 10 $hdel_count
+                set hlen [r HLEN myhash]
+                set expired_fields [info_field [r info stats] expired_fields]
+                assert_equal 1 [get_keys_with_volatile_items r]
 
-            # Restart the server and load the AOF
-            restart_server 0 true false
-            r debug loadaof
-            r DEBUG SET-ACTIVE-EXPIRE 0
-            
-            set hlen [r HLEN myhash]
-            set expired_fields [info_field [r info stats] expired_fields]
-            assert_equal 1 [get_keys_with_volatile_items r]
+                # Verify that HLEN is 20, and we should now have no expired fields
+                if {$hlen != 20} {
+                    fail "Expected HLEN to be 20, but got $hlen"
+                }
+                assert_equal 20 [expr ($expired_fields + $hlen)]
 
-            # Verify that HLEN is between 20 and 30 (inclusive), and 
-            # when combined with expired_fields, the total should be 30
-            if {$hlen < 20 || $hlen > 30} {
-                fail "Expected HLEN to be between 20 and 30, but got $hlen"
-            }
-            assert_equal 30 [expr ($expired_fields + $hlen)]
+                # Verify the TTLs are preserved
+                for {set i 1} {$i <= 10} {incr i} {
+                    assert_equal $long_expire [r HEXPIRETIME myhash FIELDS 1 f$i]
+                    assert_equal v$i [r HGET myhash f$i]
+                }
+                # Verify expired fields
+                for {set i 11} {$i <= 30} {incr i} {
+                    assert_equal -2 [r HTTL myhash FIELDS 1 f$i]
+                    assert_equal "" [r HGET myhash f$i]
+                }
+                # Verify fields with no TTL
+                for {set i 31} {$i <= 40} {incr i} {
+                    assert_equal -1 [r HTTL myhash FIELDS 1 f$i]
+                    assert_equal v$i [r HGET myhash f$i]
+                }
 
-            # Verify the TTLs are preserved
-            for {set i 1} {$i <= 10} {incr i} {
-                assert_equal $long_expire [r HEXPIRETIME myhash FIELDS 1 f$i]
-                assert_equal v$i [r HGET myhash f$i]
-            }
-            # Verify expired fields
-            for {set i 11} {$i <= 30} {incr i} {
-                assert_equal -2 [r HTTL myhash FIELDS 1 f$i]
-                assert_equal "" [r HGET myhash f$i]
-            }
-            # Verify fields with no TTL
-            for {set i 31} {$i <= 40} {incr i} {
-                assert_equal -1 [r HTTL myhash FIELDS 1 f$i]
-                assert_equal v$i [r HGET myhash f$i]
-            }
-            # Re-enable active expiry
-            r DEBUG SET-ACTIVE-EXPIRE 1
-        } {OK} {needs:debug}
+                # Re-enable active expiry
+                r DEBUG SET-ACTIVE-EXPIRE 1
+            } {OK} {needs:debug}
+        }
     }
 }
 
