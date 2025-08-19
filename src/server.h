@@ -3419,6 +3419,7 @@ robj *hashTypeGetValueObject(robj *o, sds field);
 int hashTypeSet(robj *o, sds field, sds value, long long expiry, int flags);
 robj *hashTypeDup(robj *o);
 bool hashTypeHasVolatileFields(robj *o);
+bool hashTypeHasExpiredFields(robj *o, long long now);
 
 /* Pub / Sub */
 int pubsubUnsubscribeAllChannels(client *c, int notify);

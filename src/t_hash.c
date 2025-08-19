@@ -73,6 +73,17 @@ bool hashTypeHasVolatileFields(robj *o) {
     return false;
 }
 
+bool hashTypeHasExpiredFields(robj *o, long long now) {
+    if (o == NULL) return false;
+    serverAssert(o->type == OBJ_HASH);
+    if (o->encoding == OBJ_ENCODING_HASHTABLE) {
+        vset *set = hashTypeGetVolatileSet(o);
+        if (set && vsetEstimatedEarliestExpiry(set, entryGetExpiry) <= now)
+            return true;
+    }
+    return false;
+}
+
 /* make any access to the hash object elements ignore the specific elements expiration.
  * This is mainly in order to be able to access hash elements which are already expired. */
 static inline void hashTypeIgnoreTTL(robj *o, bool ignore) {

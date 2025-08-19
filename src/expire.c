@@ -170,9 +170,9 @@ void fieldExpireScanCallback(void *privdata, void *volaKey, int didx) {
     size_t expired_fields = dbReclaimExpiredFields(o, data->db, now, data->max_entries, didx);
     if (expired_fields) {
         data->has_more_expired_entries = (expired_fields == data->max_entries);
-        data->expired++;
+        data->expired += expired_fields;
     }
-    data->sampled++;
+    data->sampled += (expired_fields ? expired_fields : 1);
 }
 
 static int expireShouldSkipTableForSamplingCb(hashtable *ht) {
@@ -337,7 +337,7 @@ static long long activeExpireCycleJob(enum activeExpiryType jobType, int cycleTy
                     db_done = 1;
                     break;
                 }
-                checked_buckets++;
+                if (!data.has_more_expired_entries) checked_buckets++;
             }
             total_expired += data.expired;
             total_sampled += data.sampled;
