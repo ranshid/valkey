@@ -88,7 +88,7 @@ static hashtableResizePolicy resize_policy = HASHTABLE_RESIZE_ALLOW;
  * insertions and not on lookups. */
 
 #define MAX_FILL_PERCENT_SOFT 100
-#define MAX_FILL_PERCENT_HARD 500
+#define MAX_FILL_PERCENT_HARD 5000
 
 #define MIN_FILL_PERCENT_SOFT 13
 #define MIN_FILL_PERCENT_HARD 3

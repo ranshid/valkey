@@ -659,7 +659,7 @@ size_t hashHashtableTypeMetadataSize(void) {
 }
 
 int hashHashtableResizeAllowed(size_t moreMem, double usedRatio) {
-    return usedRatio > 800;
+    return usedRatio > 4000;
 }
 
 extern bool hashHashtableTypeValidate(hashtable *ht, void *entry);
