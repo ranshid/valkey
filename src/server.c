@@ -658,6 +658,10 @@ size_t hashHashtableTypeMetadataSize(void) {
     return sizeof(void *);
 }
 
+int hashHashtableResizeAllowed(size_t moreMem, double usedRatio) {
+    return usedRatio > 800;
+}
+
 extern bool hashHashtableTypeValidate(hashtable *ht, void *entry);
 
 hashtableType hashHashtableType = {
@@ -666,6 +670,7 @@ hashtableType hashHashtableType = {
     .keyCompare = hashtableSdsKeyCompare,
     .entryDestructor = hashHashtableTypeDestructor,
     .getMetadataSize = hashHashtableTypeMetadataSize,
+    .resizeAllowed = hashHashtableResizeAllowed,
 };
 
 hashtableType hashWithVolatileItemsHashtableType = {
