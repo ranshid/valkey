@@ -58,6 +58,9 @@ jobs:
           exit 1
         shell: bash
       - name: Install clang-tidy
-        run: sudo apt-get update && sudo apt-get install -y clang-tidy
+        run: sudo apt-get update && sudo apt-get install -y clang-tidy bear build-essential pkg-config
+      - name: Generate compilation database
+        run: |
+          bear -- make -j$(nproc)
       - name: Run clang-tidy (assert check only)
         run: clang-tidy -checks='-*,bugprone-assert-side-effect' $(find . -name '*.c') || exit 1
