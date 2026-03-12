@@ -60,6 +60,8 @@ set ::verbose 0
 set ::quiet 0
 set ::denytags {}
 set ::skiptests {}
+set ::xfail_tests {}
+set ::xfail_file ""
 set ::skipunits {}
 set ::no_latency 0
 set ::allowtags {}
@@ -382,6 +384,8 @@ proc test_server_main {} {
     set ::failed_tests {}
     set ::ok_count 0
     set ::err_count 0
+    set ::xfail_count 0
+    set ::xfailed_tests {}
 
     # Enter the event loop to handle clients I/O
     after 100 test_server_cron
@@ -494,6 +498,14 @@ proc read_from_test_client fd {
             flush stdout
             gets stdin
         }
+    } elseif {$status eq {xfail}} {
+        set msg "\[[colorstr yellow $status]\]: $data"
+        if {!$::quiet} {
+            puts $msg
+        }
+        lappend ::xfailed_tests $msg
+        incr ::xfail_count
+        set ::active_clients_task($fd) "(XFAIL) $data"
     } elseif {$status eq {exception}} {
         puts "\[[colorstr red $status]\]: $data"
         kill_clients
@@ -604,7 +616,11 @@ proc signal_idle_client fd {
 # The the_end function gets called when all the test units were already
 # executed, so the test finished.
 proc print_test_summary {} {
-    puts "\nTest Summary: [colorstr bold-green $::ok_count] passed, [colorstr bold-red $::err_count] failed"
+    set summary "Test Summary: [colorstr bold-green $::ok_count] passed, [colorstr bold-red $::err_count] failed"
+    if {$::xfail_count > 0} {
+        append summary ", [colorstr bold-yellow $::xfail_count] xfailed"
+    }
+    puts "\n$summary"
 }
 
 proc the_end {} {
@@ -615,6 +631,12 @@ proc the_end {} {
         puts "  $time seconds - $name"
     }
     print_test_summary
+    if {[llength $::xfailed_tests]} {
+        puts "\n[colorstr bold-yellow {Expected failures (xfail)}]:\n"
+        foreach xfailed $::xfailed_tests {
+            puts "  - $xfailed"
+        }
+    }
     if {[llength $::failed_tests]} {
         puts "\n[colorstr bold-red {!!! WARNING}] The following tests failed:\n"
         foreach failed $::failed_tests {
@@ -687,6 +709,10 @@ proc print_help_screen {} {
         "                   line). This option can be repeated."
         "--skiptest <test>  Test name or regexp pattern (if <test> starts with '/') to"
         "                   skip. This option can be repeated."
+        "--xfailfile <file> Name of a file containing test names or regexp patterns (if"
+        "                   <test> starts with '/') that are expected to fail (one per"
+        "                   line). These tests still run but failures are reported as"
+        "                   xfail and don't cause a non-zero exit. Default: tests/xfail.list"
         "--tags <tags>      Run only tests having specified tags (allow list) or, for '-'"
         "                   prefixed tags, skip tests with the tag (deny list). Only"
         "                   top-level-only tags are possible in the allow list."
@@ -763,6 +789,9 @@ for {set j 0} {$j < [llength $argv]} {incr j} {
         set ::skiptests [concat $::skiptests [split $file_data "\n"]]
     } elseif {$opt eq {--skiptest}} {
         lappend ::skiptests $arg
+        incr j
+    } elseif {$opt eq {--xfailfile}} {
+        set ::xfail_file $arg
         incr j
     } elseif {$opt eq {--valgrind}} {
         set ::valgrind 1
@@ -882,6 +911,21 @@ for {set j 0} {$j < [llength $argv]} {incr j} {
     } else {
         puts "Wrong argument: $opt"
         exit 1
+    }
+}
+
+# Load xfail test patterns. Use --xfailfile to override the default file.
+if {$::xfail_file eq ""} {
+    set ::xfail_file "tests/xfail.list"
+}
+if {[file exists $::xfail_file]} {
+    set fp [open $::xfail_file r]
+    set file_data [read $fp]
+    close $fp
+    foreach line [split $file_data "\n"] {
+        set line [string trim $line]
+        if {$line eq "" || [string index $line 0] eq "#"} continue
+        lappend ::xfail_tests $line
     }
 }
 

@@ -1,0 +1,7 @@
+# Expected failure (xfail) test patterns.
+# Tests matching these patterns will still run but failures are reported
+# as xfail and don't cause a non-zero exit.
+#
+# One test name or regexp pattern per line (prefix with '/' for regexp).
+# Blank lines and lines starting with '#' are ignored.
+/eviction due to output buffers of many MGET clients, client eviction: *

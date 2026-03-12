@@ -3,8 +3,15 @@ set ::num_passed 0
 set ::num_failed 0
 set ::num_skipped 0
 set ::num_aborted 0
+set ::num_xfailed 0
 set ::tests_failed {}
+set ::tests_xfailed {}
+set ::xfail_tests {}
 set ::cur_test ""
+
+proc is_xfail_test {name} {
+    return [search_pattern_list $name $::xfail_tests]
+}
 
 proc fail {msg} {
     error "assertion:$msg"
@@ -274,20 +281,27 @@ proc test {name code {okpattern undefined} {tags {}}} {
             if {!$assertion} {
                 lappend details $::errorInfo
             }
-            lappend ::tests_failed $details
 
-            incr ::num_failed
-            send_data_packet $::test_server_fd err [join $details "\n"]
+            if {[is_xfail_test $name]} {
+                incr ::num_xfailed
+                lappend ::tests_xfailed $details
+                send_data_packet $::test_server_fd xfail [join $details "\n"]
+            } else {
+                lappend ::tests_failed $details
 
-            if {$::exit_on_failure} {
-                puts "Test error (last server port:[srv port], log:[srv stdout]), test will exit now"
-                flush stdout
-                exit 1
-            }
-            if {$::stop_on_failure} {
-                puts "Test error (last server port:[srv port], log:[srv stdout]), press enter to teardown the test."
-                flush stdout
-                gets stdin
+                incr ::num_failed
+                send_data_packet $::test_server_fd err [join $details "\n"]
+
+                if {$::exit_on_failure} {
+                    puts "Test error (last server port:[srv port], log:[srv stdout]), test will exit now"
+                    flush stdout
+                    exit 1
+                }
+                if {$::stop_on_failure} {
+                    puts "Test error (last server port:[srv port], log:[srv stdout]), press enter to teardown the test."
+                    flush stdout
+                    gets stdin
+                }
             }
         } else {
             # Re-raise, let handler up the stack take care of this.
@@ -301,10 +315,16 @@ proc test {name code {okpattern undefined} {tags {}}} {
         } else {
             set msg "Expected '$okpattern' to equal or match '$retval'"
             lappend details $msg
-            lappend ::tests_failed $details
 
-            incr ::num_failed
-            send_data_packet $::test_server_fd err [join $details "\n"]
+            if {[is_xfail_test $name]} {
+                incr ::num_xfailed
+                lappend ::tests_xfailed $details
+                send_data_packet $::test_server_fd xfail [join $details "\n"]
+            } else {
+                lappend ::tests_failed $details
+                incr ::num_failed
+                send_data_packet $::test_server_fd err [join $details "\n"]
+            }
         }
     }
 
